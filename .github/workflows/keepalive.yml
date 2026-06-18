@@ -1,0 +1,46 @@
+name: keep-streamlit-awake
+
+# 무료 Streamlit 앱은 밤새 트래픽이 없으면 잠들어, 아침 첫 접속이 20~40초 느리다.
+# 매일 아침(KST)에 앱을 미리 깨워둔다. 10개 지점이 같은 앱을 쓰므로 한 번 깨우면 전 지점이 빠르다.
+# GitHub 예약 실행은 UTC 기준이며 부하 시 수십 분 지연될 수 있어, 아침 시간대에 여러 번 친다.
+
+on:
+  schedule:
+    - cron: "0 23 * * *"    # 08:00 KST
+    - cron: "30 23 * * *"   # 08:30 KST
+    - cron: "0 0 * * *"     # 09:00 KST
+    - cron: "30 0 * * *"    # 09:30 KST
+    - cron: "0 1 * * *"     # 10:00 KST
+  workflow_dispatch:         # 수동 실행(테스트)용
+
+permissions:
+  contents: write
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 앱 깨우기 (분당 URL 3회 ping)
+        run: |
+          URL="https://misoro-input.streamlit.app/?branch=%EB%B6%84%EB%8B%B9"
+          for i in 1 2 3; do
+            code=$(curl -sSL -c cj -b cj --max-redirs 10 -o /dev/null -w "%{http_code}" "$URL" || echo ERR)
+            echo "ping $i -> HTTP $code"
+            sleep 20
+          done
+          rm -f cj
+
+      - name: 스케줄러 유지용 주간 스탬프 (60일 비활성 비활성화 방지)
+        if: github.event_name == 'schedule'
+        run: |
+          # 월요일에만 날짜 스탬프를 커밋해 저장소를 활성 상태로 유지
+          if [ "$(date -u +%u)" = "1" ]; then
+            date -u +%Y-%m-%d > .keepalive
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .keepalive
+            git commit -m "chore: keepalive stamp [skip ci]" || echo "변경 없음"
+            git push || echo "push 생략"
+          fi
