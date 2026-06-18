@@ -1,0 +1,10 @@
+service_account.json
+.streamlit/secrets.toml
+.streamlit/cloud_secrets.toml
+_*.json
+__pycache__/
+*.pyc
+.venv/
+venv/
+.DS_Store
+.claude/

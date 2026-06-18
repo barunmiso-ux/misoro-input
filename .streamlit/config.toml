@@ -1,0 +1,10 @@
+# misoro-dashboard 와 동일한 하늘색 테마
+[theme]
+primaryColor = "#4dabf7"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#e7f5ff"
+textColor = "#1a1a1a"
+font = "sans serif"
+
+[server]
+headless = true

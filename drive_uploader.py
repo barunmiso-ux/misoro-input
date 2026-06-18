@@ -1,0 +1,61 @@
+"""댓글 캡처 이미지를 공유 드라이브(Shared Drive)에 업로드.
+
+서비스 계정은 개인 드라이브 용량이 없어 일반 폴더엔 업로드 불가
+→ 공유 드라이브 폴더(서비스 계정을 콘텐츠 관리자로 추가)에 올린다.
+폴더 ID는 config.DRIVE_FOLDER_ID 또는 st.secrets["drive_folder_id"] 로 설정.
+저장된 파일은 공유 드라이브 권한(조직 내)으로 접근 — 별도 공개 설정은 하지 않는다.
+"""
+
+from __future__ import annotations
+
+import os
+
+from google.oauth2.service_account import Credentials
+
+import config
+
+DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive"]
+_LOCAL_KEY_FILE = "service_account.json"
+
+
+def _folder_id() -> str:
+    if config.DRIVE_FOLDER_ID:
+        return config.DRIVE_FOLDER_ID
+    try:
+        import streamlit as st
+
+        return st.secrets.get("drive_folder_id", "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def enabled() -> bool:
+    return bool(_folder_id())
+
+
+def _service():
+    from googleapiclient.discovery import build
+
+    if os.path.exists(_LOCAL_KEY_FILE):
+        creds = Credentials.from_service_account_file(_LOCAL_KEY_FILE, scopes=DRIVE_SCOPES)
+    else:
+        import streamlit as st
+
+        creds = Credentials.from_service_account_info(
+            dict(st.secrets["gcp_service_account"]), scopes=DRIVE_SCOPES
+        )
+    return build("drive", "v3", credentials=creds, cache_discovery=False)
+
+
+def upload_image(data: bytes, filename: str, mimetype: str | None) -> str:
+    """이미지 바이트를 공유 드라이브 폴더에 업로드하고 보기 링크(webViewLink) 반환."""
+    from googleapiclient.http import MediaInMemoryUpload
+
+    svc = _service()
+    meta = {"name": filename, "parents": [_folder_id()]}
+    media = MediaInMemoryUpload(data, mimetype=mimetype or "application/octet-stream")
+    f = svc.files().create(
+        body=meta, media_body=media,
+        fields="id,webViewLink", supportsAllDrives=True,
+    ).execute()
+    return f.get("webViewLink", "")
