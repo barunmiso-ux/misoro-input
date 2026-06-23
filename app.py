@@ -101,7 +101,11 @@ def apply_prefill(branch, report_date):
     if st.session_state.get("loaded_for") == tag:
         return st.session_state.get("existing_info")
 
-    existing = _cached_existing(branch, report_date.isoformat())
+    try:
+        existing = _cached_existing(branch, report_date.isoformat())
+    except Exception:  # noqa: BLE001
+        existing = None
+        st.warning("기존 기록을 불러오지 못했습니다 (일시적 오류일 수 있어요). 입력·제출에는 지장 없습니다.")
     act = existing["activity"] if existing else None
 
     # 동적 댓글 위젯 키 정리 (날짜 변경 시 잔상 제거)

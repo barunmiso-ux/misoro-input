@@ -57,7 +57,7 @@ def _q(title: str, a1: str) -> str:
 def _vget(rng: str):
     return (
         _service().spreadsheets().values()
-        .get(spreadsheetId=config.SHEET_ID, range=rng).execute()
+        .get(spreadsheetId=config.SHEET_ID, range=rng).execute(num_retries=3)
         .get("values", [])
     )
 
@@ -65,7 +65,7 @@ def _vget(rng: str):
 def _vbatch_get(ranges: list):
     res = (
         _service().spreadsheets().values()
-        .batchGet(spreadsheetId=config.SHEET_ID, ranges=ranges).execute()
+        .batchGet(spreadsheetId=config.SHEET_ID, ranges=ranges).execute(num_retries=3)
     )
     return [vr.get("values", []) for vr in res.get("valueRanges", [])]
 
@@ -74,7 +74,7 @@ def _vupdate(rng: str, values: list):
     _service().spreadsheets().values().update(
         spreadsheetId=config.SHEET_ID, range=rng,
         valueInputOption="USER_ENTERED", body={"values": values},
-    ).execute()
+    ).execute(num_retries=3)
 
 
 def _vappend(rng: str, values: list):
@@ -82,20 +82,20 @@ def _vappend(rng: str, values: list):
         spreadsheetId=config.SHEET_ID, range=rng,
         valueInputOption="USER_ENTERED", insertDataOption="INSERT_ROWS",
         body={"values": values},
-    ).execute()
+    ).execute(num_retries=3)
 
 
 def _vclear(rng: str):
     _service().spreadsheets().values().clear(
         spreadsheetId=config.SHEET_ID, range=rng
-    ).execute()
+    ).execute(num_retries=3)
 
 
 def _create_tab(title: str, headers: list):
     _service().spreadsheets().batchUpdate(
         spreadsheetId=config.SHEET_ID,
         body={"requests": [{"addSheet": {"properties": {"title": title}}}]},
-    ).execute()
+    ).execute(num_retries=3)
     _vupdate(_q(title, "A1"), [headers])
 
 

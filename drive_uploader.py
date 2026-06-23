@@ -57,5 +57,5 @@ def upload_image(data: bytes, filename: str, mimetype: str | None) -> str:
     f = svc.files().create(
         body=meta, media_body=media,
         fields="id,webViewLink", supportsAllDrives=True,
-    ).execute()
+    ).execute(num_retries=3)
     return f.get("webViewLink", "")
