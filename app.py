@@ -264,8 +264,8 @@ def build_payload(branch, report_date, activity) -> tuple[dict, list]:
             route_ok = route != config.PLACEHOLDER and route not in config.GROUP_DIVIDERS
             if cnt > 0 and not name_ok:
                 errors.append(f"[{sec['label']}] 인원이 입력된 항목의 병명을 선택하세요.")
-            if sec["allow_route"] and cnt > 0 and not route_ok:
-                errors.append(f"[{sec['label']}] '{name}' 의 유입경로를 선택하세요.")
+            if sec["allow_route"] and (name_ok or cnt > 0) and not route_ok:
+                errors.append(f"[{sec['label']}] 유입경로를 선택하세요 (필수). 병명: {name if name_ok else '미선택'}")
             if name_ok or cnt > 0:
                 entry = {"name": name if name_ok else "", "count": cnt}
                 if sec["allow_route"]:
