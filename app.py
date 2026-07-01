@@ -390,8 +390,10 @@ def main():
             import sheet_writer
 
             try:
-                sheet_writer.write_submission(payload)
+                res = sheet_writer.write_submission(payload)
                 st.success("✅ " + summarize(payload))
+                if not res.get("daily_range"):
+                    st.info("이번 달 일일집계 탭이 아직 준비 안 돼 상세·활동만 기록됐어요. 관리자에게 알려주세요 (곧 반영됩니다).")
                 _cached_existing.clear()           # 캐시 무효화
                 st.session_state["loaded_for"] = None  # 배너 갱신
             except Exception as ex:  # noqa: BLE001

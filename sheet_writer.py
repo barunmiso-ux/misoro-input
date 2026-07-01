@@ -202,20 +202,26 @@ def write_submission(payload: dict) -> dict:
     daily_name = config.daily_sheet_name(d)
 
     # 1) 일일 시트: 지점 열그룹 × 날짜 행에 소계 기록
-    grid = _vget(_q(daily_name, "A:AG"))
-    hdr_row, colmap = build_column_map(grid, branch)
-    date_row = find_date_row(grid, hdr_row, d)
+    #    월별 탭이 아직 없거나(월 초 미생성) 구조 문제면 일일탭만 건너뛰고 계속 진행
+    #    (카페숙제·초진상세는 기록 → 제출이 실패하지 않음)
+    a1 = None
+    try:
+        grid = _vget(_q(daily_name, "A:AG"))
+        hdr_row, colmap = build_column_map(grid, branch)
+        date_row = find_date_row(grid, hdr_row, d)
 
-    values_by_label = {}
-    for sec in config.INQUIRY_SECTIONS:
-        values_by_label[sec["sheet_col"]] = payload["sections"][sec["key"]]["subtotal"]
+        values_by_label = {}
+        for sec in config.INQUIRY_SECTIONS:
+            values_by_label[sec["sheet_col"]] = payload["sections"][sec["key"]]["subtotal"]
 
-    cols = sorted(colmap.values())
-    c_start, c_end = cols[0], cols[-1]
-    inv = {ci: label for label, ci in colmap.items()}
-    row_vals = [values_by_label.get(inv.get(c), "") for c in range(c_start, c_end + 1)]
-    a1 = _q(daily_name, f"{_col_letter(c_start)}{date_row + 1}:{_col_letter(c_end)}{date_row + 1}")
-    _vupdate(a1, [row_vals])
+        cols = sorted(colmap.values())
+        c_start, c_end = cols[0], cols[-1]
+        inv = {ci: label for label, ci in colmap.items()}
+        row_vals = [values_by_label.get(inv.get(c), "") for c in range(c_start, c_end + 1)]
+        a1 = _q(daily_name, f"{_col_letter(c_start)}{date_row + 1}:{_col_letter(c_end)}{date_row + 1}")
+        _vupdate(a1, [row_vals])
+    except Exception:  # noqa: BLE001  (월별 탭 미존재 등)
+        a1 = None
 
     # 2) 카페숙제체크 upsert
     _upsert_homework(payload)
