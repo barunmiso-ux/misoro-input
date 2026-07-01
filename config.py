@@ -10,9 +10,9 @@ SHEET_ID = "1uTkikVDCUfVry6l-GX2L8yvlhRSVFdUtEwlubrhpZLk"
 # 서비스 계정 (이 이메일을 일일 보고 시트에 '편집자'로 추가해야 쓰기 가능)
 SERVICE_ACCOUNT_EMAIL = "rank-check-483711@rank-check-483711.iam.gserviceaccount.com"
 
-# 10개 지점
+# 9개 지점 (부산 2026-07 탈퇴)
 ALL_BRANCHES = [
-    "대전", "부산", "분당", "수원", "안산",
+    "대전", "분당", "수원", "안산",
     "영등포", "인천", "전주", "천안", "평택",
 ]
 
