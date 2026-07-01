@@ -1,0 +1,28 @@
+name: create-monthly-tab
+
+# 매월 25일, 다음 달 '[YY.MM] 지점별 주간 문의내역' 탭을 자동 생성.
+# (월 초 탭 미존재로 제출이 막히던 문제 방지 — 이제 매달 자동으로 미리 만들어짐)
+# 필요: 리포 Secret 'GCP_SA_KEY' (서비스계정 JSON 내용).
+
+on:
+  schedule:
+    - cron: "0 15 25 * *"    # 매월 25일 15:00 UTC (= 26일 00:00 KST)
+  workflow_dispatch:          # 수동 실행(즉시 생성)
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 의존성 설치
+        run: pip install --quiet google-auth google-api-python-client
+      - name: 다음 달 탭 생성
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: python scripts/create_next_month_tab.py
