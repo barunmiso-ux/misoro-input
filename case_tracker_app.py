@@ -17,7 +17,8 @@ from datetime import datetime, timezone, timedelta
 
 from export_parser import (parse_export, rows_for_sheet, infer_week_tab,
                            parse_inquiries, inquiry_rows_for_sheet, inquiry_week_tab,
-                           week_label, rows_for_sheet_by_week, inquiry_rows_by_week)
+                           week_label, rows_for_sheet_by_week, inquiry_rows_by_week,
+                           to_standard_treatment)
 from case_sheet_writer import write_patients, write_inquiries, aggregate_month, _svc
 from noshow_matcher import match_inquiries, set_override
 
@@ -119,23 +120,38 @@ def render_chojin(sid: str, tabs: list):
     if parsed["unmapped_diseases"]:
         st.warning(f"분류표에 없는 질환명(기타 처리): {parsed['unmapped_diseases']}")
     comp = parsed["completeness"]
-    # 각 필수항목이 차트의 어느 칸인지
     _FIELD = {"유입경로": "유입경로 칸", "진행치료": "진행치료 칸",
               "예약여부": "EMail 칸(예약@ / 예약안함@)", "상담자": "직업 칸"}
-    if comp["미완성_환자수"]:
-        st.error(f"⚠️ **특화질환 초진 {comp['미완성_환자수']}명 — 아래 칸을 차트에서 채우고 다시 올려주세요**")
-        for chart, nm, dis, miss in comp["미완성목록"]:
+    # ── 기록 차단 판정: 미완성(특화 필수칸 빔) · 엉뚱(진행치료 자동변환 불가) ──
+    미완성 = comp["미완성목록"]
+    엉뚱, 자동교정 = [], []
+    for p in parsed["patients"]:
+        raw = (p.treatment_raw or "").strip()
+        if not raw:
+            continue
+        std, conv = to_standard_treatment(raw)
+        if std is None:
+            엉뚱.append((p.chart_no, (p.name[:1] + "*") if p.name else "", raw))
+        elif conv:
+            자동교정.append((p.chart_no, raw, std))
+    blocked = bool(미완성) or bool(엉뚱)
+
+    if 미완성:
+        st.error(f"🚫 **특화질환 초진 {len(미완성)}명 — 필수칸 비어있음. 차트에서 채워야 기록됩니다.**")
+        for chart, nm, dis, miss in 미완성:
             spots = " · ".join(f"**{m}**({_FIELD.get(m, m)})" for m in miss)
             st.write(f"- 차트 **{chart}** {nm} ({dis}) → 채울 곳: {spots}")
-    else:
-        st.success("완전성 OK — 특화질환 필수항목 다 채워짐")
-
-    nonstd = comp.get("비표준목록", [])
-    if nonstd:
-        st.warning(f"✏️ **비표준 진행치료값 {len(nonstd)}건 — 표준값으로 교정 필요** "
-                   "(집계는 되지만 차트를 표준값으로 고쳐주세요)")
-        for chart, nm, raw, sug in nonstd:
-            st.write(f"- [{chart}] {nm}: `{raw}` → 표준 **`{sug}`** 로 바꿔주세요")
+    if 엉뚱:
+        st.error(f"🚫 **진행치료 값 {len(엉뚱)}건이 표준값 아님 + 자동변환 불가 — 차트에서 고쳐야 기록됩니다.**")
+        for chart, nm, raw in 엉뚱:
+            st.write(f"- 차트 **{chart}** {nm}: `{raw}` → 표준값"
+                     "(한약N달·약침패키지·첩약보험·특화치료·일반치료·상담만·그냥감) 중 하나로")
+    if 자동교정:
+        with st.expander(f"✏️ 표준값으로 자동 변환되어 기록될 진행치료 {len(자동교정)}건 (조치 불필요)"):
+            for chart, raw, std in 자동교정:
+                st.write(f"- [{chart}] `{raw}` → **`{std}`** 로 기록")
+    if not blocked:
+        st.success("✅ 완전성·표준값 OK — 기록 가능")
 
     with st.expander(f"환자 {len(parsed['patients'])}명 (PII 마스킹)"):
         st.table([
@@ -162,8 +178,12 @@ def render_chojin(sid: str, tabs: list):
         st.error("기록할 주차가 없어요 (해당 주차 탭이 시트에 없음).")
         return
     total = sum(len(v) for v in known.values())
-    confirm = st.checkbox(f"위 {len(known)}개 주차에 초진 {total}명 병합 기록", key="cf_chojin")
-    if st.button("📝 초진 기록하기", type="primary", disabled=not confirm, key="bt_chojin"):
+    if blocked:
+        st.warning("🚫 위 🚫 항목(미완성·표준값 아님)을 차트에서 고치고 다시 올려야 기록할 수 있어요.")
+    confirm = st.checkbox(f"위 {len(known)}개 주차에 초진 {total}명 병합 기록", key="cf_chojin",
+                          disabled=blocked)
+    if st.button("📝 초진 기록하기", type="primary",
+                 disabled=(not confirm or blocked), key="bt_chojin"):
         oks = 0
         for wk in sorted(known):
             try:

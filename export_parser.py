@@ -145,6 +145,33 @@ def classify_treatment(treatment_cell: str) -> str:
     return "기타"                         # 미지값(통증 등 오기입) → 로그
 
 
+def to_standard_treatment(raw: str):
+    """진행치료 원본 → (표준값, 자동변환됨?).
+
+    - 이미 표준값 → (그값, False)
+    - 확신되는 변형(일빈치료→일반치료·상담+외용제→상담만·힌약3달→한약3달) → (표준값, True)
+    - 애매/엉뚱(통증·기간없는 한약·알수없는값) → **(None, False)** ← 기록 강제차단 대상
+    - 빈값 → ("", False)
+    """
+    import re as _re
+    v = _s(raw)
+    if not v:
+        return "", False
+    if v in STANDARD_TREATMENTS:
+        return v, False
+    cat = classify_treatment(v)
+    simple = {"일반치료": "일반치료", "상담만": "상담만", "그냥감": "그냥감",
+              "약침결제": "약침패키지", "첩약보험": "첩약보험", "특화치료": "특화치료"}
+    if cat in simple:
+        return simple[cat], True
+    if cat == "한약결제":
+        m = _re.search(r"(\d+)\s*달", v)   # 기간 숫자 있으면 살림(힌약3달→한약3달)
+        if m:
+            return f"한약{m.group(1)}달", True
+        return None, False                 # 기간 미상(한약·공진단 등) → 강제 교정
+    return None, False                     # 기타/미정(엉뚱한 값) → 강제 교정
+
+
 def normalize_result(raw: str) -> str:
     """상담결과 원본 → 표준값(예약완료/예약안함/재통화필요). 못 맞추면 원본 유지.
 
@@ -391,7 +418,14 @@ def rows_for_sheet_by_week(path: str, mask_pii: bool = True) -> dict:
         if not _s(row.get("차트번호")) and not _s(row.get("이름")):
             continue
         wk = _week_tab_of(_s(row.get("등록일"))) or "_미분류"
-        rec = ["" if (h in blank or h not in cols) else _s(row.get(h)) for h in EXPORT_HEADERS]
+        rec = []
+        for h in EXPORT_HEADERS:
+            val = "" if (h in blank or h not in cols) else _s(row.get(h))
+            if h == "진행치료" and val:
+                std, _conv = to_standard_treatment(val)   # 확신되는 변형은 표준값으로 기록
+                if std is not None:                        # None(엉뚱)이면 원본 유지(앱이 기록 차단)
+                    val = std
+            rec.append(val)
         groups[wk].append(rec)
     return dict(groups)
 
