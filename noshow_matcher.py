@@ -59,7 +59,7 @@ def set_override(sid: str, key: str, status: str, writer: str = "", *,
                        body={"requests": [{"addSheet": {"properties": {"title": OVERRIDE_TAB}}}]}).execute()
         sh.values().update(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A1",
                            valueInputOption="RAW",
-                           body={"values": [["키", "보정상태", "보정자", "시각", "지켜볼기한"]]}).execute()
+                           body={"values": [["키", "보정상태", "보정자", "시각", "예약일"]]}).execute()
     vals = sh.values().get(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2:E").execute().get("values", [])
     rows = [r for r in vals if r and r[0].strip()]
     clear = status in ("", "(자동)") and not until
