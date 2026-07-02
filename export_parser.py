@@ -128,12 +128,14 @@ def classify_treatment(treatment_cell: str) -> str:
     v = _s(treatment_cell)
     if not v:
         return "미정"
-    if "첩약" in v:                       # 첩약보험(급여 첩약) → 결제(한약N달과 구분)
-        return "첩약보험"
+    # 우선순위: 한약(비급여) > 약침패키지(비급여) > 첩약보험(급여).
+    # 조합 예: 첩약보험+약침패키지 → 약침결제(비급여 결제가 더 강한 결제신호, 사용자 확정 A안).
     if "한약" in v or "힌약" in v or "공진단" in v:  # 한약N달·공진단(비급여) → 결제 (힌약=오타)
         return "한약결제"
-    if "약침" in v or "패키지" in v:     # 약침패키지(한약없이) → 결제
+    if "약침" in v or "패키지" in v:     # 약침패키지 → 결제 (첩약보다 우선: 조합이면 약침으로)
         return "약침결제"
+    if "첩약" in v:                       # 첩약보험(급여 첩약) → 결제(한약N달과 구분)
+        return "첩약보험"
     if "특화" in v:                       # 특화치료 1회(패키지X) — 치료받음, 미전환
         return "특화치료"
     if "상담" in v or "외용" in v:        # 상담외용제·상담만 = 치료 안 받고 감
