@@ -58,26 +58,62 @@ def _tabs(sh, sid) -> list:
 
 def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
                    key_path: str = DEFAULT_KEY, dry_run: bool = True,
-                   verify: bool = True) -> dict:
+                   verify: bool = True, merge: bool = False) -> dict:
     """rows23: 23열 행 리스트(export 순서). B{FIRST}:Y{LAST} 클리어 후 환자행 기록.
 
+    merge=False → 탭 통째 교체(기존 환자행 삭제 후 새로 기록).
+    merge=True  → **차트번호 기준 upsert**(기존 유지 + 같은 차트는 갱신 + 새 차트는 추가).
+                  여러 번/여러 주에 나눠 올려도 데이터 안 지워짐. 차트 없으면 이름으로 키.
     dry_run=True → 계획만 반환(쓰기 안 함). False → 실제 기록 후 verify.
     """
-    # ── 입력 검증
+    # ── 입력 검증(새 행)
     if not rows23:
         raise ValueError("기록할 환자행이 없습니다.")
     for i, r in enumerate(rows23):
         if len(r) != EXPECTED_COLS:
             raise ValueError(f"{i}행 열수 오류: {len(r)} (기대 {EXPECTED_COLS})")
-    n = len(rows23)
-    cap = PATIENT_LAST_ROW - PATIENT_FIRST_ROW + 1
-    if n > cap:
-        raise ValueError(f"환자 {n}명이 테이블 용량({cap}) 초과 — 양식 확인 필요")
 
     sh = _svc(key_path)
     titles = _tabs(sh, spreadsheet_id)
     if tab not in titles:
         raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
+
+    merged_added = merged_updated = 0
+    if merge:
+        # 기존 C..Y 읽어 차트(=D, C:Y기준 index1) 키로 upsert. 없으면 이름 키.
+        existing = sh.values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{tab}'!C{PATIENT_FIRST_ROW}:Y{PATIENT_LAST_ROW}"
+        ).execute().get("values", [])
+
+        def _keyof(r):
+            chart = str(r[1]).strip() if len(r) > 1 else ""
+            name = str(r[0]).strip() if len(r) > 0 else ""
+            return chart or ("이름:" + name)
+
+        by_key, order = {}, []
+        for r in existing:
+            r = (list(r) + [""] * EXPECTED_COLS)[:EXPECTED_COLS]
+            if not str(r[0]).strip() and not str(r[1]).strip():
+                continue
+            k = _keyof(r)
+            if k not in by_key:
+                order.append(k)
+            by_key[k] = r
+        for r in rows23:
+            k = _keyof(r)
+            if k in by_key:
+                merged_updated += 1
+            else:
+                order.append(k)
+                merged_added += 1
+            by_key[k] = list(r)
+        rows23 = [by_key[k] for k in order]
+
+    n = len(rows23)
+    cap = PATIENT_LAST_ROW - PATIENT_FIRST_ROW + 1
+    if n > cap:
+        raise ValueError(f"환자 {n}명이 테이블 용량({cap}) 초과 — 양식 확인 필요")
 
     clear_range = f"'{tab}'!B{PATIENT_FIRST_ROW}:Y{PATIENT_LAST_ROW}"
     write_anchor = f"'{tab}'!B{PATIENT_FIRST_ROW}"
@@ -87,6 +123,7 @@ def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
         "spreadsheet_id": spreadsheet_id, "tab": tab,
         "clear_range": clear_range, "write_anchor": write_anchor, "rows": n,
         "보존": "Z+ 상담테이블·157행↓ 수식·앵커 미변경",
+        "merge": merge, "추가": merged_added, "갱신": merged_updated,
         "dry_run": dry_run,
     }
     if dry_run:
@@ -144,9 +181,10 @@ def write_settlement(spreadsheet_id: str, tab: str, values: dict, *,
 
 def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
                     key_path: str = DEFAULT_KEY, dry_run: bool = True,
-                    verify: bool = True) -> dict:
+                    verify: bool = True, merge: bool = False) -> dict:
     """rows11: 11열(AA~AK) 행. Z{FIRST}:AK{LAST} 클리어 후 번호+상담행 기록.
 
+    merge=True → **차트번호(없으면 성명|상담시각) 기준 upsert**(기존 유지+갱신+추가).
     안전계약: **Z5:AK139만**(①초진테이블 B~Y·수식·앵커 미변경). dry_run 기본 True.
     """
     if not rows11:
@@ -154,15 +192,51 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
     for i, r in enumerate(rows11):
         if len(r) != INQ_EXPECTED_COLS:
             raise ValueError(f"{i}행 열수 오류: {len(r)} (기대 {INQ_EXPECTED_COLS})")
-    n = len(rows11)
-    cap = INQ_LAST_ROW - INQ_FIRST_ROW + 1
-    if n > cap:
-        raise ValueError(f"문의 {n}건이 테이블 용량({cap}) 초과 — 양식 확인 필요")
 
     sh = _svc(key_path)
     titles = _tabs(sh, spreadsheet_id)
     if tab not in titles:
         raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
+
+    merged_added = merged_updated = 0
+    if merge:
+        # 기존 AA..AK 읽어 upsert. AA:AK 기준 index 0=상담시각·1=차트·2=성명.
+        existing = sh.values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"'{tab}'!AA{INQ_FIRST_ROW}:AK{INQ_LAST_ROW}"
+        ).execute().get("values", [])
+
+        def _keyof(r):
+            chart = str(r[1]).strip() if len(r) > 1 else ""
+            if chart:
+                return chart
+            name = str(r[2]).strip() if len(r) > 2 else ""
+            tm = str(r[0]).strip() if len(r) > 0 else ""
+            return f"{name}|{tm}"
+
+        by_key, order = {}, []
+        for r in existing:
+            r = (list(r) + [""] * INQ_EXPECTED_COLS)[:INQ_EXPECTED_COLS]
+            if not any(str(x).strip() for x in r):
+                continue
+            k = _keyof(r)
+            if k not in by_key:
+                order.append(k)
+            by_key[k] = r
+        for r in rows11:
+            k = _keyof(r)
+            if k in by_key:
+                merged_updated += 1
+            else:
+                order.append(k)
+                merged_added += 1
+            by_key[k] = list(r)
+        rows11 = [by_key[k] for k in order]
+
+    n = len(rows11)
+    cap = INQ_LAST_ROW - INQ_FIRST_ROW + 1
+    if n > cap:
+        raise ValueError(f"문의 {n}건이 테이블 용량({cap}) 초과 — 양식 확인 필요")
 
     clear_range = f"'{tab}'!Z{INQ_FIRST_ROW}:AK{INQ_LAST_ROW}"
     write_anchor = f"'{tab}'!Z{INQ_FIRST_ROW}"
@@ -172,6 +246,7 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
         "spreadsheet_id": spreadsheet_id, "tab": tab,
         "clear_range": clear_range, "write_anchor": write_anchor, "rows": n,
         "보존": "B~Y 초진테이블·157행↓ 수식·앵커 미변경",
+        "merge": merge, "추가": merged_added, "갱신": merged_updated,
         "dry_run": dry_run,
     }
     if dry_run:

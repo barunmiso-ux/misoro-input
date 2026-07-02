@@ -17,7 +17,7 @@ from datetime import datetime, timezone, timedelta
 
 from export_parser import (parse_export, rows_for_sheet, infer_week_tab,
                            parse_inquiries, inquiry_rows_for_sheet, inquiry_week_tab,
-                           week_label)
+                           week_label, rows_for_sheet_by_week, inquiry_rows_by_week)
 from case_sheet_writer import write_patients, write_inquiries, aggregate_month, _svc
 from noshow_matcher import match_inquiries, set_override
 
@@ -146,20 +146,34 @@ def render_chojin(sid: str, tabs: list):
         ])
 
     st.subheader("초진 시트에 기록")
-    inferred, winfo = infer_week_tab(parsed["patients"])
-    tab = _week_selectbox(tabs, inferred, winfo, "wk_chojin")
-    st.caption(f"`{tab}` 의 **초진 환자테이블(B5:Y)**을 이 export로 교체합니다. 상담테이블·수식·집계는 보존.")
-    confirm = st.checkbox(f"'{week_label(tab)}' 에 초진 {s['초진수']}명 기록 확인", key="cf_chojin")
+    st.caption("환자별 **등록일 기준으로 각 주차 탭에 자동 분리 + 병합(차트번호 기준)** 기록합니다. "
+               "한 파일에 여러 주·여러 달이 섞여 있어도 알아서 나눠 넣어요. 상담테이블·수식·집계는 보존.")
+    by_week = rows_for_sheet_by_week(path)
+    unknown = by_week.pop("_미분류", None)
+    known = {wk: r for wk, r in by_week.items() if wk in tabs}
+    absent = {wk: r for wk, r in by_week.items() if wk not in tabs}
+    for wk in sorted(known):
+        st.write(f"- **{week_label(wk)}** → 초진 **{len(known[wk])}명** 기록")
+    for wk in sorted(absent):
+        st.warning(f"⚠️ '{week_label(wk)}' 초진 {len(absent[wk])}명 — 시트에 그 주차 탭이 없어 못 넣어요 (탭 먼저 생성 필요)")
+    if unknown:
+        st.warning(f"⚠️ 등록일을 못 읽은 {len(unknown)}명은 제외됩니다.")
+    if not known:
+        st.error("기록할 주차가 없어요 (해당 주차 탭이 시트에 없음).")
+        return
+    total = sum(len(v) for v in known.values())
+    confirm = st.checkbox(f"위 {len(known)}개 주차에 초진 {total}명 병합 기록", key="cf_chojin")
     if st.button("📝 초진 기록하기", type="primary", disabled=not confirm, key="bt_chojin"):
-        try:
-            res = write_patients(sid, tab, rows, dry_run=False)
-            if res.get("verify_ok"):
-                st.success(f"✅ 초진 {res['rows']}명 기록 완료 — {week_label(tab)}")
-                st.balloons()
-            else:
-                st.error(f"기록됐으나 검증 불일치: {res}")
-        except Exception as e:
-            st.error(f"기록 실패: {e}")
+        oks = 0
+        for wk in sorted(known):
+            try:
+                res = write_patients(sid, wk, known[wk], dry_run=False, merge=True)
+                st.success(f"✅ {week_label(wk)} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}명)")
+                oks += 1
+            except Exception as e:
+                st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
+        if oks == len(known):
+            st.balloons()
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -205,20 +219,34 @@ def render_munui(sid: str, tabs: list):
         ])
 
     st.subheader("문의 시트에 기록")
-    inferred, winfo = inquiry_week_tab(path)
-    tab = _week_selectbox(tabs, inferred, winfo, "wk_munui")
-    st.caption(f"`{tab}` 의 **상담테이블(Z5:AK)**을 이 export로 교체합니다. 초진테이블·수식·집계는 보존.")
-    confirm = st.checkbox(f"'{week_label(tab)}' 에 문의 {s['문의수']}건 기록 확인", key="cf_munui")
+    st.caption("**상담시각 기준으로 각 주차 탭에 자동 분리 + 병합(차트/성명 기준)** 기록합니다. "
+               "여러 주·여러 달 섞여도 알아서 나눠 넣어요. 초진테이블·수식·집계는 보존.")
+    by_week = inquiry_rows_by_week(path)
+    unknown = by_week.pop("_미분류", None)
+    known = {wk: r for wk, r in by_week.items() if wk in tabs}
+    absent = {wk: r for wk, r in by_week.items() if wk not in tabs}
+    for wk in sorted(known):
+        st.write(f"- **{week_label(wk)}** → 문의 **{len(known[wk])}건** 기록")
+    for wk in sorted(absent):
+        st.warning(f"⚠️ '{week_label(wk)}' 문의 {len(absent[wk])}건 — 시트에 그 주차 탭이 없어 못 넣어요 (탭 먼저 생성 필요)")
+    if unknown:
+        st.warning(f"⚠️ 상담시각을 못 읽은 {len(unknown)}건은 제외됩니다.")
+    if not known:
+        st.error("기록할 주차가 없어요 (해당 주차 탭이 시트에 없음).")
+        return
+    total = sum(len(v) for v in known.values())
+    confirm = st.checkbox(f"위 {len(known)}개 주차에 문의 {total}건 병합 기록", key="cf_munui")
     if st.button("📝 문의 기록하기", type="primary", disabled=not confirm, key="bt_munui"):
-        try:
-            res = write_inquiries(sid, tab, rows, dry_run=False)
-            if res.get("verify_ok"):
-                st.success(f"✅ 문의 {res['rows']}건 기록 완료 — {week_label(tab)}")
-                st.balloons()
-            else:
-                st.error(f"기록됐으나 검증 불일치: {res}")
-        except Exception as e:
-            st.error(f"기록 실패: {e}")
+        oks = 0
+        for wk in sorted(known):
+            try:
+                res = write_inquiries(sid, wk, known[wk], dry_run=False, merge=True)
+                st.success(f"✅ {week_label(wk)} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}건)")
+                oks += 1
+            except Exception as e:
+                st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
+        if oks == len(known):
+            st.balloons()
 
 
 @st.cache_data(ttl=300, show_spinner="문의↔초진 매칭 중…")

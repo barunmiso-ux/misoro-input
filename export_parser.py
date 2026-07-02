@@ -366,6 +366,36 @@ def rows_for_sheet(path: str, mask_pii: bool = True) -> list:
     return out
 
 
+def _week_tab_of(date_str: str):
+    """등록일/상담시각 문자열 → 'YY-MM-N주' 또는 None(날짜 못읽음)."""
+    ymd = _date_ymd(date_str)
+    if not ymd:
+        return None
+    y, m, d = ymd
+    return f"{y % 100:02d}-{m:02d}-{week_of_month(d)}주"
+
+
+def rows_for_sheet_by_week(path: str, mask_pii: bool = True) -> dict:
+    """초진 행을 **등록일 기준 주차탭별로 그룹핑**. 반환 {week_tab: [rows23], ...}.
+
+    한 파일이 여러 주(또는 여러 달)에 걸쳐도 환자별 등록일로 각 주차에 자동 배분한다.
+    날짜를 못 읽는 행은 '_미분류' 키에 모음(호출측에서 경고).
+    """
+    from collections import defaultdict
+    df = _read_excel(path).fillna("")
+    df.columns = [str(c).strip() for c in df.columns]
+    cols = set(df.columns)
+    blank = set(SHEET_PII_BLANK) if mask_pii else set()
+    groups = defaultdict(list)
+    for _, row in df.iterrows():
+        if not _s(row.get("차트번호")) and not _s(row.get("이름")):
+            continue
+        wk = _week_tab_of(_s(row.get("등록일"))) or "_미분류"
+        rec = ["" if (h in blank or h not in cols) else _s(row.get(h)) for h in EXPORT_HEADERS]
+        groups[wk].append(rec)
+    return dict(groups)
+
+
 # ══════════════════════════════════════════════════════════════════
 # 문의(상담내역) — 시트 ②상담테이블(Z~AK)
 # ══════════════════════════════════════════════════════════════════
@@ -474,6 +504,20 @@ def inquiry_week_tab(path: str) -> tuple:
     df = _read_inquiry_df(path)
     times = [_s(v) for v in df.get("상담시각", [])] if "상담시각" in df.columns else []
     return infer_week_from_dates(times)
+
+
+def inquiry_rows_by_week(path: str) -> dict:
+    """문의 행을 **상담시각 기준 주차탭별로 그룹핑**. 반환 {week_tab: [rows11], ...}."""
+    from collections import defaultdict
+    df = _read_inquiry_df(path)
+    cols = set(df.columns)
+    groups = defaultdict(list)
+    for _, row in df.iterrows():
+        if _inquiry_is_empty(row):
+            continue
+        wk = _week_tab_of(_s(row.get("상담시각"))) or "_미분류"
+        groups[wk].append([_s(row.get(h)) if h in cols else "" for h in INQUIRY_SHEET_ORDER])
+    return dict(groups)
 
 
 if __name__ == "__main__":
