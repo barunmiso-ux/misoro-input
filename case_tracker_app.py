@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from export_parser import (parse_export, rows_for_sheet, infer_week_tab,
                            parse_inquiries, inquiry_rows_for_sheet, inquiry_week_tab,
                            week_label, rows_for_sheet_by_week, inquiry_rows_by_week,
-                           to_standard_treatment)
+                           to_standard_treatment, normalize_result)
 from case_sheet_writer import write_patients, write_inquiries, aggregate_month, _svc
 from noshow_matcher import match_inquiries, set_override
 
@@ -225,10 +225,18 @@ def render_munui(sid: str, tabs: list):
 
     if parsed["unmapped_diseases"]:
         st.warning(f"분류표에 없는 질환명(기타 처리): {parsed['unmapped_diseases']}")
+    _STD_R = ("예약완료", "예약안함", "재통화필요")
     nonstd_r = s.get("비표준결과", [])
-    if nonstd_r:
-        st.warning(f"✏️ **비표준 상담결과 {len(nonstd_r)}건 — 표준값(예약완료/예약안함/재통화필요)으로 교정**: "
-                   + ", ".join(f"{nm} `{r}`" for nm, r in nonstd_r[:8]))
+    자동_r = [(nm, r, normalize_result(r)) for nm, r in nonstd_r if normalize_result(r) in _STD_R]
+    엉뚱_r = [(nm, r) for nm, r in nonstd_r if normalize_result(r) not in _STD_R]
+    blocked_m = bool(엉뚱_r)
+    if 엉뚱_r:
+        st.error(f"🚫 **상담결과 {len(엉뚱_r)}건이 표준값 아님 + 자동변환 불가 — 차트에서 고쳐야 기록됩니다.** "
+                 + ", ".join(f"{nm} `{r}`" for nm, r in 엉뚱_r[:8]))
+    if 자동_r:
+        with st.expander(f"✏️ 표준값으로 자동 변환되어 기록될 상담결과 {len(자동_r)}건 (조치 불필요)"):
+            for nm, r, std in 자동_r:
+                st.write(f"- {nm}: `{r}` → **`{std}`**")
 
     with st.expander(f"문의 {len(parsed['inquiries'])}건 (PII 마스킹)"):
         st.table([
@@ -255,8 +263,12 @@ def render_munui(sid: str, tabs: list):
         st.error("기록할 주차가 없어요 (해당 주차 탭이 시트에 없음).")
         return
     total = sum(len(v) for v in known.values())
-    confirm = st.checkbox(f"위 {len(known)}개 주차에 문의 {total}건 병합 기록", key="cf_munui")
-    if st.button("📝 문의 기록하기", type="primary", disabled=not confirm, key="bt_munui"):
+    if blocked_m:
+        st.warning("🚫 위 🚫 상담결과(표준값 아님)를 차트에서 고치고 다시 올려야 기록할 수 있어요.")
+    confirm = st.checkbox(f"위 {len(known)}개 주차에 문의 {total}건 병합 기록", key="cf_munui",
+                          disabled=blocked_m)
+    if st.button("📝 문의 기록하기", type="primary",
+                 disabled=(not confirm or blocked_m), key="bt_munui"):
         oks = 0
         for wk in sorted(known):
             try:

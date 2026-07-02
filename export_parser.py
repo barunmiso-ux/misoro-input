@@ -550,7 +550,15 @@ def inquiry_rows_by_week(path: str) -> dict:
         if _inquiry_is_empty(row):
             continue
         wk = _week_tab_of(_s(row.get("상담시각"))) or "_미분류"
-        groups[wk].append([_s(row.get(h)) if h in cols else "" for h in INQUIRY_SHEET_ORDER])
+        rec = []
+        for h in INQUIRY_SHEET_ORDER:
+            val = _s(row.get(h)) if h in cols else ""
+            if h == "상담결과" and val:
+                norm = normalize_result(val)          # 예약→예약완료 등 표준 정규화
+                if norm in STANDARD_RESULTS:
+                    val = norm                         # 아니면 원본(앱이 차단)
+            rec.append(val)
+        groups[wk].append(rec)
     return dict(groups)
 
 
