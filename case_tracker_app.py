@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import hmac
 import tempfile
 
 import streamlit as st
@@ -326,8 +327,33 @@ def render_monthly(sid: str):
             st.error(f"실패: {e}")
 
 
+def _check_password() -> bool:
+    """비밀번호 게이트(공개 배포 보호). secrets에 app_password 없으면 통과(로컬 개발).
+    통과 시 세션 유지. 대시보드와 동일 방식."""
+    try:
+        expected = st.secrets.get("app_password")
+    except Exception:
+        expected = None
+    if not expected:
+        return True  # 로컬 개발 모드
+    if st.session_state.get("pw_ok", False):
+        return True
+    st.title("📊 주간통계 자동입력")
+    with st.form("login"):
+        pw = st.text_input("비밀번호", type="password", placeholder="담당자에게 받은 비밀번호")
+        if st.form_submit_button("입장", use_container_width=True):
+            if hmac.compare_digest(pw or "", str(expected)):
+                st.session_state["pw_ok"] = True
+                st.rerun()
+            else:
+                st.error("❌ 비밀번호가 일치하지 않습니다")
+    return False
+
+
 def main():
     st.set_page_config(page_title="주간통계 자동입력", page_icon="📊", layout="centered")
+    if not _check_password():
+        st.stop()
     st.title("📊 주간통계 자동입력")
     st.caption("OKTAS 명단(초진·문의)을 올리면 주간통계가 자동으로 채워집니다 "
                "— 손으로 입력할 필요 없어요. (예약율·결제율·전환율 자동계산)")
