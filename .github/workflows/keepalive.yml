@@ -28,13 +28,16 @@ jobs:
           git commit -m "chore: daily restart [skip ci]" || echo "변경 없음"
           git push || echo "push 생략"
 
-      - name: 재배포 대기 후 앱 깨우기
+      - name: 재배포 대기 후 앱 깨우기 (일일보고 + 주간통계 둘 다)
         run: |
           sleep 150
-          URL="https://misoro-input.streamlit.app/?branch=%EB%B6%84%EB%8B%B9"
-          for i in 1 2 3 4; do
-            code=$(curl -sSL -c cj -b cj --max-redirs 10 -o /dev/null -w "%{http_code}" "$URL" || echo ERR)
-            echo "ping $i -> HTTP $code"
-            sleep 30
+          for URL in \
+            "https://misoro-input.streamlit.app/?branch=%EB%B6%84%EB%8B%B9" \
+            "https://misoro-stats.streamlit.app/" ; do
+            for i in 1 2 3; do
+              code=$(curl -sSL -c cj -b cj --max-redirs 10 -o /dev/null -w "%{http_code}" "$URL" || echo ERR)
+              echo "$URL  ping $i -> HTTP $code"
+              sleep 25
+            done
           done
           rm -f cj
