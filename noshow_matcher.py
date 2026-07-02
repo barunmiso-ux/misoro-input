@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 
 from case_sheet_writer import _svc, DEFAULT_KEY, _tabs
 from export_parser import (classify_treatment, _classify_disease, PAID_OUTCOMES,
@@ -30,36 +30,47 @@ def iq_key(iq: dict) -> str:
 
 
 def load_overrides(sid: str, key_path: str = DEFAULT_KEY) -> dict:
-    """_노쇼보정 탭 → {키: 보정상태}. 탭 없으면 빈 dict."""
+    """_노쇼보정 탭 → {키: {"status": 보정상태, "until": 지켜볼기한}}. 탭 없으면 빈 dict."""
     sh = _svc(key_path)
     try:
-        vals = sh.values().get(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2:B").execute().get("values", [])
+        vals = sh.values().get(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2:E").execute().get("values", [])
     except Exception:
         return {}
-    return {r[0]: r[1] for r in vals if len(r) >= 2 and r[0].strip() and r[1].strip()}
+    out = {}
+    for r in vals:
+        if r and r[0].strip():
+            out[r[0].strip()] = {
+                "status": (r[1].strip() if len(r) > 1 else ""),
+                "until": (r[4].strip() if len(r) > 4 else ""),
+            }
+    return out
 
 
 def set_override(sid: str, key: str, status: str, writer: str = "", *,
-                 key_path: str = DEFAULT_KEY, now: str = "") -> dict:
-    """_노쇼보정 탭에 (키→상태) upsert. status 가 '' 또는 '(자동)' 이면 해당 키 제거."""
+                 key_path: str = DEFAULT_KEY, now: str = "", until: str = "") -> dict:
+    """_노쇼보정 탭에 (키→상태·지켜볼기한) upsert. status='' 또는 '(자동)'이고 기한도 없으면 제거.
+
+    until(지켜볼기한, YYYY-MM-DD): 먼 예약일. 있으면 매처가 그 날짜를 이 문의의 마감·매칭상한으로
+    사용 → 그 안에 초진 오면 전환, 지나면 노쇼(2주 기본 대신).
+    """
     sh = _svc(key_path)
     if OVERRIDE_TAB not in _tabs(sh, sid):
         sh.batchUpdate(spreadsheetId=sid,
                        body={"requests": [{"addSheet": {"properties": {"title": OVERRIDE_TAB}}}]}).execute()
         sh.values().update(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A1",
                            valueInputOption="RAW",
-                           body={"values": [["키", "보정상태", "보정자", "시각"]]}).execute()
-    vals = sh.values().get(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2:D").execute().get("values", [])
+                           body={"values": [["키", "보정상태", "보정자", "시각", "지켜볼기한"]]}).execute()
+    vals = sh.values().get(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2:E").execute().get("values", [])
     rows = [r for r in vals if r and r[0].strip()]
-    clear = status in ("", "(자동)")
+    clear = status in ("", "(자동)") and not until
     kept = [r for r in rows if r[0] != key]
     if not clear:
-        kept.append([key, status, writer, now])
-    sh.values().clear(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2:D").execute()
+        kept.append([key, status, writer, now, until])
+    sh.values().clear(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2:E").execute()
     if kept:
         sh.values().update(spreadsheetId=sid, range=f"'{OVERRIDE_TAB}'!A2",
                            valueInputOption="RAW", body={"values": kept}).execute()
-    return {"key": key, "status": status or "(자동)", "removed": clear}
+    return {"key": key, "status": status or "(자동)", "until": until, "removed": clear}
 
 # 시트 열(0-based 그리드 기준 — 읽기 범위에 맞춰 인덱싱)
 # 초진 C5:Y154 → 0:이름(C) 1:차트(D) 3:전화(F) 4:휴대폰(G) 11:등록일(N) 15:질환(R) 16:주치의(S) 20:진행치료(W)
@@ -80,6 +91,29 @@ def _pdate(s):
             return datetime.strptime(s, fmt).date()
         except ValueError:
             continue
+    return None
+
+
+def _pdate_ref(s, ref):
+    """지켜볼기한 파서. 'YYYY-MM-DD' 우선, 없으면 'M/D'/'M-D'(연도 생략) → ref 연도 기준
+    미래 날짜로 해석(이미 지난 M/D 면 다음 해)."""
+    d = _pdate(s)
+    if d:
+        return d
+    t = str(s or "").strip().replace(".", "/").replace("-", "/")
+    parts = [p for p in t.split("/") if p != ""]
+    if len(parts) == 2 and all(p.isdigit() for p in parts):
+        mo, dy = int(parts[0]), int(parts[1])
+        try:
+            d = date(ref.year, mo, dy)
+        except ValueError:
+            return None
+        if d < ref:
+            try:
+                d = date(ref.year + 1, mo, dy)
+            except ValueError:
+                return None
+        return d
     return None
 
 
@@ -260,12 +294,13 @@ def aggregate_counselors(result: dict) -> dict:
     return out
 
 
-def _match(iq, chojin, window_days):
-    """문의 iq 에 대응하는 초진 찾기. 반환 (초진|None, 방법)."""
+def _match(iq, chojin, window_days, hi_override=None):
+    """문의 iq 에 대응하는 초진 찾기. 반환 (초진|None, 방법).
+    hi_override(date): 있으면 매칭 상한을 이 날짜로(먼 예약일 보정용). 없으면 문의일+window."""
     if not iq["time"]:
         return None, ""
     lo = iq["time"] - timedelta(days=1)
-    hi = iq["time"] + timedelta(days=window_days)
+    hi = hi_override if hi_override else (iq["time"] + timedelta(days=window_days))
     for c in chojin:
         if c["reg"] and not (lo <= c["reg"] <= hi):
             continue
@@ -301,17 +336,28 @@ def match_inquiries(sid: str, asof, tabs: list, *, window_days: int = DEFAULT_WI
     for iq in inquiries:
         if "예약완료" not in iq["result"]:
             continue
+        # 수기보정 조회: {"status":강제상태, "until":지켜볼기한(예약일)}
+        k = iq_key(iq)
+        ov = overrides.get(k) or {}
+        until = _pdate_ref(ov.get("until"), asof) if ov.get("until") else None
+        forced = ov.get("status") or ""
+
         method, matched = "", None
         if not iq["time"]:
             status, note = "판정불가", "상담시각 없음"
         else:
-            c, method = _match(iq, chojin, window_days)
-            deadline = iq["time"] + timedelta(days=window_days)
+            # 예약일(until) 보정 있으면 그 날짜를 마감·매칭상한으로. 없으면 문의일+2주.
+            deadline = until if until else (iq["time"] + timedelta(days=window_days))
+            c, method = _match(iq, chojin, window_days, hi_override=until)
             if c:
                 status, note = "전환", f"{c['week']} 초진 ({c['reg']}) · {method}매칭"
                 matched = {"week": c["week"], "reg": str(c["reg"]), "outcome": c.get("outcome", "")}
             elif asof <= deadline:
-                status, note = "내원대기", f"마감 {deadline} (D-{(deadline - asof).days})"
+                status = "내원대기"
+                note = (f"예약일 {until}까지 지켜봄 (D-{(deadline - asof).days})" if until
+                        else f"마감 {deadline} (D-{(deadline - asof).days})")
+            elif until:
+                status, note = "노쇼", f"예약일 {until} 지남 · 초진 미발견"
             else:
                 need = {_week_tab_of(iq["time"], None), _week_tab_of(deadline, None)}
                 if need <= tabset:
@@ -319,17 +365,18 @@ def match_inquiries(sid: str, asof, tabs: list, *, window_days: int = DEFAULT_WI
                 else:
                     status, note = "데이터대기", f"마감 지났으나 초진주 미업로드: {sorted(need - tabset)}"
 
-        # 수기보정: 자동판정 위에 덮어씀
+        # 순수 상태강제(예약일 없이 전환/노쇼 등 직접 지정) → 자동판정 위에 덮어씀.
+        # (예약일 until 은 위에서 이미 자동계산에 반영됐으므로 별도 강제 안 함)
         auto_status = status
-        k = iq_key(iq)
-        overridden = k in overrides
-        if overridden:
+        overridden = bool(ov)
+        if forced and not until:
             note = f"[수기보정←{status}] {note}"
-            status = overrides[k]
+            status = forced
 
         counts[status] = counts.get(status, 0) + 1
         rows.append({**iq, "status": status, "auto_status": auto_status, "note": note,
-                     "method": method, "matched": matched, "key": k, "overridden": overridden})
+                     "method": method, "matched": matched, "key": k, "overridden": overridden,
+                     "until": str(until) if until else "", "forced": forced})
 
     n = sum(counts.values())
     converted = counts["전환"]

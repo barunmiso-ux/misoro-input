@@ -328,24 +328,33 @@ def render_noshow(sid: str, tabs: list):
     st.subheader("✏️ 상태 수기보정")
     st.caption("매칭이 틀린 경우(무명·전화 다름·타지점 등) '보정' 열을 고치고 저장하세요. "
                "(자동)=매처 판정 그대로. 보정은 자동판정 위에 덮어씁니다.")
+    st.caption("💡 한 달 뒤처럼 먼 날짜로 예약한 경우 → '보정'은 그대로 두고 **지켜볼 기한**에 "
+               "예약일(예: 8/15 또는 2026-08-15)만 적으면, 그 날까지 내원대기 → 오면 전환 / 지나면 노쇼로 자동판정됩니다.")
     rows = r["rows"]
     keys = [x["key"] for x in rows]
-    init = ["(자동)" if not x["overridden"] else x["status"] for x in rows]
+    # 보정 열: 예약일(until)만 있고 강제상태가 없으면 (자동) 유지 — until 은 자동판정에 반영됨
+    init = ["(자동)" if (not x["overridden"] or not x.get("forced")) else x["status"] for x in rows]
+    init_until = [x.get("until", "") for x in rows]
     disp = [{"주차": x["week"], "성명": _mask(x["name"]), "질환": x["disease"],
-             "문의일": str(x["time"]), "자동판정": x["auto_status"], "보정": init[i]}
+             "문의일": str(x["time"]), "자동판정": x["auto_status"],
+             "보정": init[i], "지켜볼 기한": init_until[i]}
             for i, x in enumerate(rows)]
     edited = st.data_editor(
         disp, hide_index=True, use_container_width=True, key="noshow_editor",
-        column_config={"보정": st.column_config.SelectboxColumn(
-            "보정", options=["(자동)", "전환", "노쇼", "내원대기"], required=True)},
+        column_config={
+            "보정": st.column_config.SelectboxColumn(
+                "보정", options=["(자동)", "전환", "노쇼", "내원대기"], required=True),
+            "지켜볼 기한": st.column_config.TextColumn(
+                "지켜볼 기한", help="먼 예약일(예: 8/15). 이 날까지 내원대기 → 오면 전환/지나면 노쇼")},
         disabled=["주차", "성명", "질환", "문의일", "자동판정"])
     if st.button("💾 보정 저장", key="bt_override"):
         now = r["asof"]
         changed = 0
         for i, row in enumerate(edited):
-            if row["보정"] != init[i]:
+            new_until = (row.get("지켜볼 기한") or "").strip()
+            if row["보정"] != init[i] or new_until != init_until[i]:
                 set_override(sid, keys[i], "" if row["보정"] == "(자동)" else row["보정"],
-                             "app", now=now)
+                             "app", now=now, until=new_until)
                 changed += 1
         _run_match.clear()  # 매칭 캐시 무효화 → 재계산
         st.success(f"{changed}건 보정 저장됨. 위 카드가 갱신됩니다." if changed else "변경 없음")
