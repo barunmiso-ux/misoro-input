@@ -83,7 +83,7 @@ def _week_selectbox(tabs: list, inferred, winfo: dict, key: str) -> str:
 def render_chojin(sid: str, tabs: list):
     up = st.file_uploader("초진 export — 환자검색결과 (.xls/.xlsx)", type=["xls", "xlsx"], key="up_chojin")
     if not up:
-        st.caption("OKTAS '환자검색결과'를 .xls로 export 해서 올리세요.")
+        st.caption("차트에서 '환자검색결과'를 .xls로 내려받아 올리세요.")
         return
     try:
         path = _save_temp(up)
@@ -119,11 +119,11 @@ def render_chojin(sid: str, tabs: list):
     if parsed["unmapped_diseases"]:
         st.warning(f"분류표에 없는 질환명(기타 처리): {parsed['unmapped_diseases']}")
     comp = parsed["completeness"]
-    # 각 필수항목이 OKTAS 차트의 어느 칸인지
+    # 각 필수항목이 차트의 어느 칸인지
     _FIELD = {"유입경로": "유입경로 칸", "진행치료": "진행치료 칸",
               "예약여부": "EMail 칸(예약@ / 예약안함@)", "상담자": "직업 칸"}
     if comp["미완성_환자수"]:
-        st.error(f"⚠️ **특화질환 초진 {comp['미완성_환자수']}명 — 아래 칸을 OKTAS 차트에서 채우고 다시 올려주세요**")
+        st.error(f"⚠️ **특화질환 초진 {comp['미완성_환자수']}명 — 아래 칸을 차트에서 채우고 다시 올려주세요**")
         for chart, nm, dis, miss in comp["미완성목록"]:
             spots = " · ".join(f"**{m}**({_FIELD.get(m, m)})" for m in miss)
             st.write(f"- 차트 **{chart}** {nm} ({dis}) → 채울 곳: {spots}")
@@ -182,7 +182,7 @@ def render_chojin(sid: str, tabs: list):
 def render_munui(sid: str, tabs: list):
     up = st.file_uploader("문의 export — 상담내역 (.xls/.xlsx)", type=["xls", "xlsx"], key="up_munui")
     if not up:
-        st.caption("OKTAS '상담내역'을 .xls로 export 해서 올리세요.")
+        st.caption("차트에서 '상담내역'을 .xls로 내려받아 올리세요.")
         return
     try:
         path = _save_temp(up)
@@ -346,7 +346,7 @@ def render_monthly(sid: str):
 
     st.write(f"**{month_tab}** ← 주간 {len(plan['weeks'])}개 합침: {', '.join(plan['weeks'])}")
     st.info(f"초진 **{plan['초진합계']}명** + 문의 **{plan['문의합계']}건** 을 월간탭에 기록")
-    st.caption("매출·총내원(직접입력)은 안 건드림 — OKTAS 월말결산 몫. 비율은 월간탭 수식이 월 단위로 재계산.")
+    st.caption("매출·총내원(직접입력)은 안 건드림 — 차트 월말결산 몫. 비율은 월간탭 수식이 월 단위로 재계산.")
     confirm = st.checkbox(f"{month_tab} 자동생성 확인 (기존 월간탭 환자/문의 교체)", key="cf_month")
     if st.button("🗓️ 월간탭 자동생성", type="primary", disabled=not confirm, key="bt_month"):
         try:
@@ -385,7 +385,7 @@ def main():
     if not _check_password():
         st.stop()
     st.title("📊 주간통계 자동입력")
-    st.caption("OKTAS 명단(초진·문의)을 올리면 주간통계가 자동으로 채워집니다 "
+    st.caption("차트 명단(초진·문의)을 올리면 주간통계가 자동으로 채워집니다 "
                "— 손으로 입력할 필요 없어요. (예약율·결제율·전환율 자동계산)")
 
     branch = _branch_from_url()
