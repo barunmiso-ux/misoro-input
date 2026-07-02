@@ -87,14 +87,23 @@ def _s(v) -> str:
 
 
 def _classify_disease(name: str) -> tuple[str, bool]:
-    """질환명 → 시트그룹. 반환 (그룹, 분류성공여부)."""
+    """질환명 → 시트그룹. 반환 (그룹, 분류성공여부).
+
+    정확일치 우선, 실패 시 **부분일치 폴백**(아토피피부염→'아토피' 포함→피부,
+    알레르기성비염→'비염'→호흡기). 긴 병명 우선 매칭, '기타*' 카테고리는 폴백 제외.
+    """
     n = _s(name)
     if not n:
         return "", True
-    grp = _DISEASE_CATEGORY.get(n)
+    grp = _DISEASE_CATEGORY.get(n)               # 1) 정확일치
     if grp:
         return GROUP_TO_SHEET.get(grp, "통증기타"), True
-    return "기타", False  # 미분류
+    for key in sorted(_DISEASE_CATEGORY, key=len, reverse=True):   # 2) 부분일치(긴 병명 우선)
+        if key.startswith("기타"):
+            continue
+        if key in n:
+            return GROUP_TO_SHEET.get(_DISEASE_CATEGORY[key], "통증기타"), True
+    return "기타", False                          # 3) 진짜 미분류
 
 
 def _parse_booking(email_cell: str) -> str:
