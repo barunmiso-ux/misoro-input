@@ -286,6 +286,32 @@ def week_of_month(day: int) -> int:
     return ((day - 1) // 7) + 1
 
 
+def week_range(tab: str):
+    """'YY-MM-N주' → (시작date, 종료date). 주차규칙 역산(N주 = (N-1)*7+1일 ~ N*7일).
+    월 마지막일로 클램프. 주차탭 아니면(월탭 등) None."""
+    import re as _re
+    import calendar
+    import datetime
+    m = _re.match(r"(\d{2})-(\d{2})-(\d)주", (tab or "").strip())
+    if not m:
+        return None
+    yy, mm, n = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    year = 2000 + yy
+    last = calendar.monthrange(year, mm)[1]
+    start = min((n - 1) * 7 + 1, last)
+    end = min(n * 7, last)
+    return datetime.date(year, mm, start), datetime.date(year, mm, end)
+
+
+def week_label(tab: str) -> str:
+    """'26-06-4주' → '26-06-4주 (6/22~6/28)'. 범위 못구하면 원본 반환."""
+    r = week_range(tab)
+    if not r:
+        return tab
+    s, e = r
+    return f"{tab} ({s.month}/{s.day}~{e.month}/{e.day})"
+
+
 def _tab_from_weeks(weeks: list) -> tuple:
     from collections import Counter
     if not weeks:

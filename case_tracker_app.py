@@ -16,7 +16,8 @@ import streamlit as st
 from datetime import datetime, timezone, timedelta
 
 from export_parser import (parse_export, rows_for_sheet, infer_week_tab,
-                           parse_inquiries, inquiry_rows_for_sheet, inquiry_week_tab)
+                           parse_inquiries, inquiry_rows_for_sheet, inquiry_week_tab,
+                           week_label)
 from case_sheet_writer import write_patients, write_inquiries, aggregate_month, _svc
 from noshow_matcher import match_inquiries, set_override
 
@@ -64,14 +65,15 @@ def _week_selectbox(tabs: list, inferred, winfo: dict, key: str) -> str:
     """주차 자동감지 안내 + 선택 + 불일치 경고. 반환 선택된 탭."""
     default_idx = tabs.index(inferred) if inferred in tabs else 0
     if inferred and inferred in tabs:
-        st.success(f"📅 초진/상담 날짜 기준 **자동감지: {inferred}** (직접 바꿀 수 있어요)")
+        st.success(f"📅 초진/상담 날짜 기준 **자동감지: {week_label(inferred)}** (직접 바꿀 수 있어요)")
     elif inferred:
-        st.warning(f"자동감지 주차 '{inferred}' 탭이 시트에 없습니다 — 탭을 먼저 만들어야 합니다.")
+        st.warning(f"자동감지 주차 '{week_label(inferred)}' 탭이 시트에 없습니다 — 탭을 먼저 만들어야 합니다.")
     if winfo.get("multi"):
         st.warning(f"⚠️ 날짜가 여러 주에 걸쳐 있습니다: {winfo['counts']} — 주차를 꼭 확인하세요.")
-    tab = st.selectbox("기록할 주차 탭", tabs, index=default_idx, key=key)
+    tab = st.selectbox("기록할 주차 탭", tabs, index=default_idx, key=key,
+                       format_func=week_label)   # '26-06-4주 (6/22~6/28)' 로 표시
     if inferred and tab != inferred:
-        st.warning(f"⚠️ 자동감지({inferred})와 다른 주차({tab})를 선택했습니다. 맞는지 확인하세요.")
+        st.warning(f"⚠️ 자동감지({week_label(inferred)})와 다른 주차({week_label(tab)})를 선택했습니다. 맞는지 확인하세요.")
     return tab
 
 
@@ -147,12 +149,12 @@ def render_chojin(sid: str, tabs: list):
     inferred, winfo = infer_week_tab(parsed["patients"])
     tab = _week_selectbox(tabs, inferred, winfo, "wk_chojin")
     st.caption(f"`{tab}` 의 **초진 환자테이블(B5:Y)**을 이 export로 교체합니다. 상담테이블·수식·집계는 보존.")
-    confirm = st.checkbox(f"'{tab}' 에 초진 {s['초진수']}명 기록 확인", key="cf_chojin")
+    confirm = st.checkbox(f"'{week_label(tab)}' 에 초진 {s['초진수']}명 기록 확인", key="cf_chojin")
     if st.button("📝 초진 기록하기", type="primary", disabled=not confirm, key="bt_chojin"):
         try:
             res = write_patients(sid, tab, rows, dry_run=False)
             if res.get("verify_ok"):
-                st.success(f"✅ 초진 {res['rows']}명 기록 완료 — {tab}")
+                st.success(f"✅ 초진 {res['rows']}명 기록 완료 — {week_label(tab)}")
                 st.balloons()
             else:
                 st.error(f"기록됐으나 검증 불일치: {res}")
@@ -206,12 +208,12 @@ def render_munui(sid: str, tabs: list):
     inferred, winfo = inquiry_week_tab(path)
     tab = _week_selectbox(tabs, inferred, winfo, "wk_munui")
     st.caption(f"`{tab}` 의 **상담테이블(Z5:AK)**을 이 export로 교체합니다. 초진테이블·수식·집계는 보존.")
-    confirm = st.checkbox(f"'{tab}' 에 문의 {s['문의수']}건 기록 확인", key="cf_munui")
+    confirm = st.checkbox(f"'{week_label(tab)}' 에 문의 {s['문의수']}건 기록 확인", key="cf_munui")
     if st.button("📝 문의 기록하기", type="primary", disabled=not confirm, key="bt_munui"):
         try:
             res = write_inquiries(sid, tab, rows, dry_run=False)
             if res.get("verify_ok"):
-                st.success(f"✅ 문의 {res['rows']}건 기록 완료 — {tab}")
+                st.success(f"✅ 문의 {res['rows']}건 기록 완료 — {week_label(tab)}")
                 st.balloons()
             else:
                 st.error(f"기록됐으나 검증 불일치: {res}")
