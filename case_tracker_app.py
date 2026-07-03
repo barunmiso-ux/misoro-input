@@ -121,7 +121,7 @@ def render_chojin(sid: str, tabs: list):
         st.warning(f"분류표에 없는 질환명(기타 처리): {parsed['unmapped_diseases']}")
     comp = parsed["completeness"]
     _FIELD = {"유입경로": "유입경로 칸", "진행치료": "진행치료 칸",
-              "예약여부": "EMail 칸(예약@ / 예약안함@)", "상담자": "직업 칸"}
+              "결제여부": "EMail 칸(결제@ / 결제안함@)", "상담자": "직업 칸"}
     # ── 기록 차단 판정: 미완성(특화 필수칸 빔) · 엉뚱(진행치료 자동변환 불가) ──
     미완성 = comp["미완성목록"]
     엉뚱, 자동교정 = [], []
@@ -156,7 +156,7 @@ def render_chojin(sid: str, tabs: list):
     with st.expander(f"환자 {len(parsed['patients'])}명 (PII 마스킹)"):
         st.table([
             {"차트": p.chart_no, "이름": (p.name[:1] + "*") if p.name else "",
-             "질환": f"{p.disease}({p.disease_group})", "예약": p.booking,
+             "질환": f"{p.disease}({p.disease_group})", "결제여부": p.booking,
              "진료결과": p.outcome, "유입": p.inflow, "상담": p.counselor}
             for p in parsed["patients"]
         ])
