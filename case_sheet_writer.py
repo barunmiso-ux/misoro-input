@@ -36,8 +36,13 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
 def _creds(key_path: str = DEFAULT_KEY):
-    """로컬(service_account.json/DEFAULT_KEY) 또는 Streamlit secrets 양쪽 지원."""
+    """인증 우선순위: ① GCP_SA_KEY env(JSON 문자열, GitHub Actions용) →
+    ② 로컬 service_account.json/DEFAULT_KEY → ③ Streamlit secrets(배포)."""
     import os
+    key = os.environ.get("GCP_SA_KEY")
+    if key:
+        import json
+        return Credentials.from_service_account_info(json.loads(key), scopes=SCOPES)
     for p in ("service_account.json", key_path):
         if p and os.path.exists(p):
             return Credentials.from_service_account_file(p, scopes=SCOPES)

@@ -1,0 +1,35 @@
+name: create-weekly-tab
+
+# 매주 금요일, '다음 주' 주차 탭(YY-MM-N주)을 전 지점 시트에 미리 생성.
+# 지점이 주말/월초에 export 올릴 때 탭이 이미 있어 바로 기록되게 함.
+# 안전망으로 '이번 주' 탭도 함께 보장(이미 있으면 skip — idempotent).
+# 주차 규칙은 앱(export_parser)과 동일: 그 날짜의 '월 + week_of_month(일)'.
+# 필요: 리포 Secret 'GCP_SA_KEY' (서비스계정 JSON 내용).
+
+on:
+  schedule:
+    - cron: "0 6 * * 5"       # 매주 금요일 06:00 UTC (= 15:00 KST)
+  workflow_dispatch:           # 수동 실행(즉시 생성)
+
+permissions:
+  contents: read
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 의존성 설치
+        run: pip install --quiet google-auth google-api-python-client
+      - name: 다음 주 + 이번 주 탭 생성
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          NEXT=$(date -u -d '+7 days' +%Y-%m-%d)
+          echo "== 다음 주 (기준 $NEXT) =="
+          python create_week_tabs.py --commit --date "$NEXT"
+          echo "== 이번 주 (안전망) =="
+          python create_week_tabs.py --commit
