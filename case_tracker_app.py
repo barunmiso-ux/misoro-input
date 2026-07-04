@@ -20,6 +20,7 @@ from export_parser import (parse_export, rows_for_sheet, infer_week_tab,
                            week_label, rows_for_sheet_by_week, inquiry_rows_by_week,
                            to_standard_treatment, normalize_result)
 from case_sheet_writer import write_patients, write_inquiries, aggregate_month, _svc
+from upload_log import log_upload
 from noshow_matcher import match_inquiries, set_override
 
 _KST = timezone(timedelta(hours=9))
@@ -81,7 +82,7 @@ def _week_selectbox(tabs: list, inferred, winfo: dict, key: str) -> str:
 # ──────────────────────────────────────────────────────────────────
 # 초진 탭
 # ──────────────────────────────────────────────────────────────────
-def render_chojin(sid: str, tabs: list):
+def render_chojin(sid: str, tabs: list, branch: str = ""):
     up = st.file_uploader("초진 export — 환자검색결과 (.xls/.xlsx)", type=["xls", "xlsx"], key="up_chojin")
     if not up:
         st.caption("차트에서 '환자검색결과'를 .xls로 내려받아 올리세요.")
@@ -189,6 +190,7 @@ def render_chojin(sid: str, tabs: list):
             try:
                 res = write_patients(sid, wk, known[wk], dry_run=False, merge=True)
                 st.success(f"✅ {week_label(wk)} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}명)")
+                log_upload(branch, "초진", wk, res["추가"], res["갱신"], res["rows"])
                 oks += 1
             except Exception as e:
                 st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
@@ -199,7 +201,7 @@ def render_chojin(sid: str, tabs: list):
 # ──────────────────────────────────────────────────────────────────
 # 문의 탭
 # ──────────────────────────────────────────────────────────────────
-def render_munui(sid: str, tabs: list):
+def render_munui(sid: str, tabs: list, branch: str = ""):
     up = st.file_uploader("문의 export — 상담내역 (.xls/.xlsx)", type=["xls", "xlsx"], key="up_munui")
     if not up:
         st.caption("차트에서 '상담내역'을 .xls로 내려받아 올리세요.")
@@ -274,6 +276,7 @@ def render_munui(sid: str, tabs: list):
             try:
                 res = write_inquiries(sid, wk, known[wk], dry_run=False, merge=True)
                 st.success(f"✅ {week_label(wk)} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}건)")
+                log_upload(branch, "문의", wk, res["추가"], res["갱신"], res["rows"])
                 oks += 1
             except Exception as e:
                 st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
@@ -446,9 +449,9 @@ def main():
 
     t1, t2, t3, t4 = st.tabs(["🧑‍⚕️ 초진 기록", "📞 문의 기록", "📊 노쇼/전환", "🗓️ 월간 집계"])
     with t1:
-        render_chojin(sid, tabs)
+        render_chojin(sid, tabs, branch)
     with t2:
-        render_munui(sid, tabs)
+        render_munui(sid, tabs, branch)
     with t3:
         render_noshow(sid, tabs)
     with t4:
