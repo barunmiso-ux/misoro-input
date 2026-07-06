@@ -121,6 +121,16 @@ def _parse_booking(email_cell: str) -> str:
     return "미상"
 
 
+def _strip_chub_suffix(disease: str) -> str:
+    """질환칸 정규화: '알레르기비염(첩약보험)'·'생리통(첩약)' → 병명만.
+    첩약보험 여부는 진행치료칸에서 관리하므로 병명엔 접미사 안 붙임(집계표 병명만 매칭)."""
+    d = _s(disease)
+    for suf in ("(첩약보험)", "(첩약)", "（첩약보험）"):
+        if suf in d:
+            return d.split("(첩약")[0].split("（첩약")[0].strip()
+    return d
+
+
 def _std_booking_cell(val: str) -> str:
     """시트 기록용 결제여부 표준화: 결제@·예약@ → '결제@' / 결제안함@·예약안함@ → '결제안함@'.
     인식 불가(미상)면 원본 유지 → 특화 초진이면 필수칸 미충족으로 앱이 기록 차단."""
@@ -432,6 +442,8 @@ def rows_for_sheet(path: str, mask_pii: bool = True) -> list:
                     val = std
             if h == "EMail" and val:
                 val = _std_booking_cell(val)
+            if h == "VIP" and val:
+                val = _strip_chub_suffix(val)
             rec.append(val)
         out.append(rec)
     return out
@@ -471,6 +483,8 @@ def rows_for_sheet_by_week(path: str, mask_pii: bool = True) -> dict:
                     val = std
             if h == "EMail" and val:                       # 결제여부: 예약@ 등 → 결제@/결제안함@ 표준화
                 val = _std_booking_cell(val)
+            if h == "VIP" and val:                         # 질환: '병명(첩약보험)' → 병명만
+                val = _strip_chub_suffix(val)
             rec.append(val)
         groups[wk].append(rec)
     return dict(groups)
