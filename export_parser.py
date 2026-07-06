@@ -109,12 +109,24 @@ def _classify_disease(name: str) -> tuple[str, bool]:
 def _parse_booking(email_cell: str) -> str:
     """EMail 칸 → 결제여부. 표준표기: 결제@/결제안함@.
     (예약/예약안함은 예전 표기 — 전환기 흡수하되 의미는 결제여부로 통일.)"""
-    v = _s(email_cell).replace("@", "")
-    if ("결제안함" in v) or ("예약안함" in v):
+    v = _s(email_cell).replace("@", "").replace(" ", "")
+    # 부정(결제 안 함)을 먼저 — '미결제'처럼 '결제'를 포함해도 안함으로 잡히게
+    if any(k in v for k in ("결제안함", "예약안함", "미결제", "안결제", "미수납", "취소", "안함")):
         return "결제안함"
-    if ("결제" in v) or ("예약" in v):
+    if ("결제" in v) or ("예약" in v) or ("수납" in v):
         return "결제"
     return "미상"
+
+
+def _std_booking_cell(val: str) -> str:
+    """시트 기록용 결제여부 표준화: 결제@·예약@ → '결제@' / 결제안함@·예약안함@ → '결제안함@'.
+    인식 불가(미상)면 원본 유지 → 특화 초진이면 필수칸 미충족으로 앱이 기록 차단."""
+    b = _parse_booking(val)
+    if b == "결제":
+        return "결제@"
+    if b == "결제안함":
+        return "결제안함@"
+    return val
 
 
 # 진료결과 분류 — 표준 어휘(2026-07-01 확정) + 지점 변형 흡수.
@@ -401,7 +413,14 @@ def rows_for_sheet(path: str, mask_pii: bool = True) -> list:
             continue
         rec = []
         for h in EXPORT_HEADERS:
-            rec.append("" if (h in blank or h not in cols) else _s(row.get(h)))
+            val = "" if (h in blank or h not in cols) else _s(row.get(h))
+            if h == "진행치료" and val:
+                std, _conv = to_standard_treatment(val)
+                if std is not None:
+                    val = std
+            if h == "EMail" and val:
+                val = _std_booking_cell(val)
+            rec.append(val)
         out.append(rec)
     return out
 
@@ -438,6 +457,8 @@ def rows_for_sheet_by_week(path: str, mask_pii: bool = True) -> dict:
                 std, _conv = to_standard_treatment(val)   # 확신되는 변형은 표준값으로 기록
                 if std is not None:                        # None(엉뚱)이면 원본 유지(앱이 기록 차단)
                     val = std
+            if h == "EMail" and val:                       # 결제여부: 예약@ 등 → 결제@/결제안함@ 표준화
+                val = _std_booking_cell(val)
             rec.append(val)
         groups[wk].append(rec)
     return dict(groups)
