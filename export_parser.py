@@ -139,6 +139,10 @@ def _std_booking_cell(val: str) -> str:
 # 결제(전환) = 한약N달 + 약침패키지 + 첩약보험(급여 첩약). 첩약보험은 한약N달과 구분 집계.
 PAID_OUTCOMES = ("한약결제", "약침결제", "첩약보험")
 
+# 유입경로 '타지점이관' = 타 지점서 치료받다 이관된 환자. 마케팅 신규 아님 + 이미 치료 중.
+# → 특화 전환율 분모·분자에서 제외(그냥감처럼). 매출은 OKTAS결산에 자동 포함되므로 지점 실적엔 반영.
+TRANSFER_ROUTE = "타지점이관"
+
 # 표준 어휘(정확일치) — 이 값 아니면 '비표준=교정필요'로 표시(흡수는 하되 교정 유도)
 STANDARD_TREATMENTS = {"한약1달", "한약3달", "한약6달", "한약12달", "약침패키지",
                        "첩약보험", "특화치료", "일반치료", "상담만", "그냥감"}
@@ -283,8 +287,12 @@ def parse_export(path: str) -> dict:
     paid = sum(outcome_counts.get(k, 0) for k in PAID_OUTCOMES)  # 결제함=한약+약침
     # 특화(피부·호흡기) = 전환 측정 대상. 통증/기타는 제외.
     # 그냥감(진료 안 봄)은 결제 판단 이전 이탈 → 전환율 분모에서 제외(진료 본 사람 기준).
-    teukhwa = [p for p in patients if p.disease_group in ("피부", "호흡기")]
-    teukhwa_seen = [p for p in teukhwa if p.outcome != "그냥감"]   # 진료 본 특화초진
+    # 타지점이관 = 마케팅 신규 아님 + 이미 치료 중 → 전환율 분모·분자 둘 다에서 제외.
+    # (그 이관자 결제 매출은 OKTAS 결산 총진료비에 자동 포함되므로 지점 실적엔 반영됨.)
+    teukhwa_all = [p for p in patients if p.disease_group in ("피부", "호흡기")]
+    teukhwa_transfer = [p for p in teukhwa_all if p.inflow == TRANSFER_ROUTE]
+    teukhwa = [p for p in teukhwa_all if p.inflow != TRANSFER_ROUTE]
+    teukhwa_seen = [p for p in teukhwa if p.outcome != "그냥감"]   # 진료 본 특화초진(이관 제외)
     teukhwa_geunjang = len(teukhwa) - len(teukhwa_seen)           # 진료 전 이탈(그냥감)
     teukhwa_paid = sum(1 for p in teukhwa_seen if p.outcome in PAID_OUTCOMES)
     incomplete = [p for p in patients if p.missing]
@@ -308,8 +316,9 @@ def parse_export(path: str) -> dict:
             "상담만": outcome_counts.get("상담만", 0),
             "그냥감": outcome_counts.get("그냥감", 0),
             "미정": outcome_counts.get("미정", 0),
-            # 특화 결제전환율 = (한약+약침) / (특화초진 − 그냥감) — 진료 본 사람 기준(정직)
-            "특화초진": len(teukhwa),
+            # 특화 결제전환율 = (한약+약침) / (특화초진 − 그냥감) — 진료 본 사람 기준(정직). 타지점이관 제외.
+            "특화초진": len(teukhwa),            # 타지점이관 제외한 특화 신규
+            "특화타지점이관": len(teukhwa_transfer),  # 전환율서 뺀 이관자 수(참고)
             "특화진료전이탈": teukhwa_geunjang,   # 그냥감(진료 안 봄)
             "특화결제": teukhwa_paid,
             "특화전환율": (teukhwa_paid / len(teukhwa_seen)) if teukhwa_seen else None,
