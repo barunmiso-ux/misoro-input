@@ -122,7 +122,11 @@ def build_column_map(grid, branch: str):
     for ri, row in enumerate(grid):
         if _cell(grid, ri, 1) != "지점":
             continue
-        branch_cols = [ci for ci, v in enumerate(row) if v.strip() in config.ALL_BRANCHES]
+        # 블록 경계 = '지점' 헤더행(C열~)의 '비지 않은 셀 전부'.
+        # ALL_BRANCHES 로만 잡으면 탈퇴지점(부산 등, 템플릿엔 열이 남음)이 경계에서
+        # 빠져 → 그 앞 지점 블록이 탈퇴지점 열까지 넓어지고 colmap(dict)이 같은 라벨을
+        # 그 열로 덮어써 데이터가 탈퇴지점 칸에 기록되는 버그가 남. 남은 열도 경계로 인식.
+        branch_cols = [ci for ci in range(2, len(row)) if row[ci].strip()]
         if not branch_cols:
             continue
         for k, ci in enumerate(branch_cols):
