@@ -135,8 +135,18 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
             엉뚱.append((p.chart_no, (p.name[:1] + "*") if p.name else "", raw))
         elif conv:
             자동교정.append((p.chart_no, raw, std))
-    blocked = bool(미완성) or bool(엉뚱)
 
+    # ── 구조 이상: 질환이 대량 공란 = export 컬럼이 표준과 안 맞음(천안 케이스) → 전체 차단
+    pts = parsed["patients"]
+    질환공란 = [p for p in pts if not (p.disease or "").strip()]
+    구조이상 = len(pts) >= 2 and len(질환공란) >= len(pts) * 0.5
+
+    blocked = bool(미완성) or bool(엉뚱) or 구조이상
+
+    if 구조이상:
+        st.error(f"🚫 **export 구조가 표준과 안 맞습니다 — 초진 {len(pts)}명 중 "
+                 f"{len(질환공란)}명의 질환을 못 읽었어요.** 차트 export 형식이 다른 것 같습니다 "
+                 "(질환 칸이 비정상 위치). **이대로는 기록할 수 없어요** — 관리자에게 문의하세요.")
     if 미완성:
         st.error(f"🚫 **특화질환 초진 {len(미완성)}명 — 필수칸 비어있음. 차트에서 채워야 기록됩니다.**")
         for chart, nm, dis, miss in 미완성:
