@@ -153,12 +153,37 @@ def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
 # 결산(매출/내원) 직접입력 셀 — 주간탭·월간탭 동일 템플릿(검증 2026-07-01).
 SETTLE_CELLS = {"매출": "D158", "환불": "D159", "총내원": "D166", "신환내원": "D167"}
 
+WEEK_TEMPLATE = "_표준양식_주간"   # 주차 탭 없을 때 이걸 복제해 생성
+
+
+def _ensure_week_tab(sh, sid: str, tab: str) -> bool:
+    """주차 탭이 없으면 '_표준양식_주간'을 복제해 그 이름으로 생성. 생성했으면 True.
+    수식 포함 표준 템플릿을 그대로 복제하므로 결산액·비율 수식이 그대로 작동한다."""
+    meta = sh.get(spreadsheetId=sid,
+                  fields="sheets(properties(sheetId,title))").execute()
+    props = {s["properties"]["title"]: s["properties"]["sheetId"]
+             for s in meta["sheets"]}
+    if tab in props:
+        return False
+    if WEEK_TEMPLATE not in props:
+        raise ValueError(f"탭 '{tab}' 없음 + 템플릿 '{WEEK_TEMPLATE}'도 없어 생성 불가")
+    sh.batchUpdate(spreadsheetId=sid, body={"requests": [{
+        "duplicateSheet": {
+            "sourceSheetId": props[WEEK_TEMPLATE],
+            "newSheetName": tab,
+            "insertSheetIndex": 0,
+        }
+    }]}).execute()
+    return True
+
 
 def write_settlement(spreadsheet_id: str, tab: str, values: dict, *,
-                     key_path: str = DEFAULT_KEY, dry_run: bool = True) -> dict:
+                     key_path: str = DEFAULT_KEY, dry_run: bool = True,
+                     create_missing: bool = False) -> dict:
     """OKTAS 결산값을 탭의 직접입력 셀에 기록. values 키: 매출/환불/총내원/신환내원.
 
     수식·구조는 안 건드리고 해당 단일 셀만 갱신(D158/D159/D166/D167) → 비율 자동 재계산.
+    create_missing=True 면 탭이 없을 때 '_표준양식_주간' 복제로 만들고 기록한다.
     """
     data = []
     plan_writes = {}
@@ -176,7 +201,11 @@ def write_settlement(spreadsheet_id: str, tab: str, values: dict, *,
 
     sh = _svc(key_path)
     if tab not in _tabs(sh, spreadsheet_id):
-        raise ValueError(f"탭 '{tab}' 없음")
+        if create_missing:
+            _ensure_week_tab(sh, spreadsheet_id, tab)
+            plan["created"] = True
+        else:
+            raise ValueError(f"탭 '{tab}' 없음")
     sh.values().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={"valueInputOption": "USER_ENTERED", "data": data}).execute()

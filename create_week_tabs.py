@@ -16,12 +16,8 @@ import argparse
 import datetime
 
 from case_sheet_writer import _svc
+import week_rule   # 공용 주차 규칙(월~일 · 월경계 분할) — 앱·결산과 단일 기준
 
-
-def week_of_month(day: int) -> int:
-    """월 내 주차: 1주=1~7, 2주=8~14, 3주=15~21, 4주=22~28, 5주=29~말일.
-    (export_parser.week_of_month 과 동일 — CI 경량화 위해 인라인, pandas 의존 제거.)"""
-    return (day - 1) // 7 + 1
 
 BRANCH_SHEETS = {
     "분당": "1GScJEpb2frMwFpRlbw-2OtXLWe9RXIioGfCRw9mUnfI",
@@ -37,13 +33,8 @@ BRANCH_SHEETS = {
 
 
 def week_tab_name(d: datetime.date) -> str:
-    """날짜 d 의 주차 탭명 'YY-MM-N주'.
-
-    앱(export_parser._week_tab_of)과 **동일 규칙**: 그 날짜의 '월 + week_of_month(일)'.
-    월요일 기준 아님 — 앱이 레코드를 날짜별로 이 이름의 탭에 넣으므로 탭명이 반드시 일치해야 한다.
-    (예: 7/5 → 26-07-1주. 월요일 기준이면 6/29→26-06-5주가 되어 앱과 불일치했음.)
-    """
-    return f"{d.year % 100:02d}-{d.month:02d}-{week_of_month(d.day)}주"
+    """날짜 d 의 주차 탭명 'YY-MM-N주' (공용 week_rule = 앱·결산과 동일 기준)."""
+    return week_rule.tab_name(d)
 
 
 import re
@@ -108,15 +99,18 @@ def main():
     args = ap.parse_args()
 
     d = datetime.date.fromisoformat(args.date) if args.date else datetime.date.today()
-    week_tab = week_tab_name(d)
-    print(f"대상 주차 탭: {week_tab}  ({'실생성' if args.commit else 'DRY-RUN'})\n")
+    # 그 날짜가 속한 물리적 주(월~일)를 week_rule로 탭 분할 → 경계주면 2개 탭 전부 생성
+    mon = d - datetime.timedelta(days=d.weekday())
+    week_tabs = [t for t, _ in week_rule.tabs_for_range(mon, mon + datetime.timedelta(days=6))]
+    print(f"대상 주차 탭: {', '.join(week_tabs)}  ({'실생성' if args.commit else 'DRY-RUN'})\n")
 
     sh = _svc()
     for name, sid in BRANCH_SHEETS.items():
-        try:
-            print(f"[{name}] {ensure_week_tab(sh, sid, week_tab, dry_run=not args.commit)}")
-        except Exception as e:
-            print(f"[{name}] 실패: {type(e).__name__}: {e}")
+        for week_tab in week_tabs:
+            try:
+                print(f"[{name}] {week_tab}: {ensure_week_tab(sh, sid, week_tab, dry_run=not args.commit)}")
+            except Exception as e:
+                print(f"[{name}] {week_tab} 실패: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

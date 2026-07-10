@@ -355,26 +355,18 @@ def _date_ymd(s: str):
         return None
 
 
+import week_rule   # 공용 주차 규칙(월~일 · 월경계 분할) — 전 앱 단일 기준
+
+
 def week_of_month(day: int) -> int:
-    """시트 주차 규칙(검증됨): ((일-1)//7)+1. 1~7일=1주 ... 22~28일=4주."""
+    """[DEPRECATED] 옛 일자규칙 ((일-1)//7)+1. 주차 판별은 week_rule 사용(내부 미사용).
+    하위호환용으로만 잔존."""
     return ((day - 1) // 7) + 1
 
 
 def week_range(tab: str):
-    """'YY-MM-N주' → (시작date, 종료date). 주차규칙 역산(N주 = (N-1)*7+1일 ~ N*7일).
-    월 마지막일로 클램프. 주차탭 아니면(월탭 등) None."""
-    import re as _re
-    import calendar
-    import datetime
-    m = _re.match(r"(\d{2})-(\d{2})-(\d)주", (tab or "").strip())
-    if not m:
-        return None
-    yy, mm, n = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    year = 2000 + yy
-    last = calendar.monthrange(year, mm)[1]
-    start = min((n - 1) * 7 + 1, last)
-    end = min(n * 7, last)
-    return datetime.date(year, mm, start), datetime.date(year, mm, end)
+    """'YY-MM-N주' → (시작date, 종료date). 공용 week_rule(월~일·월경계 클램프). 아니면 None."""
+    return week_rule.range_for_tab(tab)
 
 
 def week_label(tab: str) -> str:
@@ -386,28 +378,29 @@ def week_label(tab: str) -> str:
     return f"{tab} ({s.month}/{s.day}~{e.month}/{e.day})"
 
 
-def _tab_from_weeks(weeks: list) -> tuple:
+def _tab_from_tabs(tabs: list) -> tuple:
+    """주차탭명 리스트 → (최빈 탭, info). 여러 주 걸치면 multi=True."""
     from collections import Counter
-    if not weeks:
+    if not tabs:
         return None, {"reason": "날짜 없음", "multi": False}
-    cnt = Counter(weeks)
-    (y, m, w), n = cnt.most_common(1)[0]
-    tab = f"{y % 100:02d}-{m:02d}-{w}주"
+    cnt = Counter(tabs)
+    tab, n = cnt.most_common(1)[0]
     return tab, {
-        "counts": {f"{yy % 100:02d}-{mm:02d}-{ww}주": c for (yy, mm, ww), c in cnt.items()},
-        "dominant": tab, "dominant_n": n, "total": len(weeks), "multi": len(cnt) > 1,
+        "counts": dict(cnt),
+        "dominant": tab, "dominant_n": n, "total": len(tabs), "multi": len(cnt) > 1,
     }
 
 
 def infer_week_from_dates(date_strs: list) -> tuple:
-    """날짜문자열 목록 → 주차탭명 추정 (tab|None, info). 형식 'YY-MM-N주'."""
-    weeks = []
+    """날짜문자열 목록 → 주차탭명 추정 (tab|None, info). week_rule 기준(월~일·월경계 분할)."""
+    import datetime as _dt
+    tabs = []
     for s in date_strs:
         ymd = _date_ymd(s)
         if ymd:
             y, m, d = ymd
-            weeks.append((y, m, week_of_month(d)))
-    return _tab_from_weeks(weeks)
+            tabs.append(week_rule.tab_name(_dt.date(y, m, d)))
+    return _tab_from_tabs(tabs)
 
 
 def infer_week_tab(patients: list) -> tuple:
@@ -450,12 +443,13 @@ def rows_for_sheet(path: str, mask_pii: bool = True) -> list:
 
 
 def _week_tab_of(date_str: str):
-    """등록일/상담시각 문자열 → 'YY-MM-N주' 또는 None(날짜 못읽음)."""
+    """등록일/상담시각 문자열 → 'YY-MM-N주' 또는 None(날짜 못읽음). week_rule 기준."""
     ymd = _date_ymd(date_str)
     if not ymd:
         return None
+    import datetime as _dt
     y, m, d = ymd
-    return f"{y % 100:02d}-{m:02d}-{week_of_month(d)}주"
+    return week_rule.tab_name(_dt.date(y, m, d))
 
 
 def rows_for_sheet_by_week(path: str, mask_pii: bool = True) -> dict:
