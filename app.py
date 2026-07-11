@@ -83,7 +83,7 @@ def _sel_index(options, value):
 # ──────────────────────────────────────────────────────────────────
 # 기존 제출 조회 + prefill (수정 모드)
 # ──────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=30, show_spinner=False)
+@st.cache_data(ttl=30, show_spinner=False, max_entries=64)
 def _cached_existing(branch: str, date_iso: str):
     """(branch, 날짜) 기존 기록 조회. 30초 캐시로 API 호출 폭주 방지."""
     if USE_MOCK:

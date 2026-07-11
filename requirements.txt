@@ -4,3 +4,4 @@ google-api-python-client>=2.120
 pandas>=2.0
 xlrd>=2.0.1
 openpyxl>=3.1
+Pillow>=10.0    # 댓글 이미지 업로드 전 축소(메모리·드라이브 절감). streamlit도 이미 의존.
