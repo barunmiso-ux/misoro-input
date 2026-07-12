@@ -63,7 +63,8 @@ def _tabs(sh, sid) -> list:
 
 def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
                    key_path: str = DEFAULT_KEY, dry_run: bool = True,
-                   verify: bool = True, merge: bool = False) -> dict:
+                   verify: bool = True, merge: bool = False,
+                   create_missing: bool = False) -> dict:
     """rows23: 23열 행 리스트(export 순서). B{FIRST}:Y{LAST} 클리어 후 환자행 기록.
 
     merge=False → 탭 통째 교체(기존 환자행 삭제 후 새로 기록).
@@ -80,11 +81,17 @@ def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
 
     sh = _svc(key_path)
     titles = _tabs(sh, spreadsheet_id)
+    _created = False
     if tab not in titles:
-        raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
+        if create_missing and not dry_run:
+            _ensure_week_tab(sh, spreadsheet_id, tab)
+            _created = True
+        elif not create_missing:
+            raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
+        # create_missing + dry_run → 실기록 때 생성 예정(계획만)
 
     merged_added = merged_updated = 0
-    if merge:
+    if merge and tab in titles:
         # 기존 C..Y 읽어 차트(=D, C:Y기준 index1) 키로 upsert. 없으면 이름 키.
         existing = sh.values().get(
             spreadsheetId=spreadsheet_id,
@@ -129,7 +136,7 @@ def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
         "clear_range": clear_range, "write_anchor": write_anchor, "rows": n,
         "보존": "Z+ 상담테이블·157행↓ 수식·앵커 미변경",
         "merge": merge, "추가": merged_added, "갱신": merged_updated,
-        "dry_run": dry_run,
+        "created": _created, "dry_run": dry_run,
     }
     if dry_run:
         return plan
@@ -215,7 +222,8 @@ def write_settlement(spreadsheet_id: str, tab: str, values: dict, *,
 
 def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
                     key_path: str = DEFAULT_KEY, dry_run: bool = True,
-                    verify: bool = True, merge: bool = False) -> dict:
+                    verify: bool = True, merge: bool = False,
+                    create_missing: bool = False) -> dict:
     """rows11: 11열(AA~AK) 행. Z{FIRST}:AK{LAST} 클리어 후 번호+상담행 기록.
 
     merge=True → **차트번호(없으면 성명|상담시각) 기준 upsert**(기존 유지+갱신+추가).
@@ -229,11 +237,16 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
 
     sh = _svc(key_path)
     titles = _tabs(sh, spreadsheet_id)
+    _created = False
     if tab not in titles:
-        raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
+        if create_missing and not dry_run:
+            _ensure_week_tab(sh, spreadsheet_id, tab)
+            _created = True
+        elif not create_missing:
+            raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
 
     merged_added = merged_updated = 0
-    if merge:
+    if merge and tab in titles:
         # 기존 AA..AK 읽어 upsert. AA:AK 기준 index 0=상담시각·1=차트·2=성명.
         existing = sh.values().get(
             spreadsheetId=spreadsheet_id,
@@ -281,7 +294,7 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
         "clear_range": clear_range, "write_anchor": write_anchor, "rows": n,
         "보존": "B~Y 초진테이블·157행↓ 수식·앵커 미변경",
         "merge": merge, "추가": merged_added, "갱신": merged_updated,
-        "dry_run": dry_run,
+        "created": _created, "dry_run": dry_run,
     }
     if dry_run:
         return plan

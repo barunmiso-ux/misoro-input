@@ -182,29 +182,30 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
     for wk in sorted(known):
         st.write(f"- **{week_label(wk)}** → 초진 **{len(known[wk])}명** 기록")
     for wk in sorted(absent):
-        st.warning(f"⚠️ '{week_label(wk)}' 초진 {len(absent[wk])}명 — 시트에 그 주차 탭이 없어 못 넣어요 (탭 먼저 생성 필요)")
+        st.info(f"🆕 '{week_label(wk)}' 초진 {len(absent[wk])}명 — 탭이 없어 **자동 생성** 후 기록됩니다")
     if unknown:
         st.warning(f"⚠️ 등록일을 못 읽은 {len(unknown)}명은 제외됩니다.")
-    if not known:
-        st.error("기록할 주차가 없어요 (해당 주차 탭이 시트에 없음).")
+    if not by_week:
+        st.error("기록할 주차가 없어요.")
         return
-    total = sum(len(v) for v in known.values())
+    total = sum(len(v) for v in by_week.values())
     if blocked:
         st.warning("🚫 위 🚫 항목(미완성·표준값 아님)을 차트에서 고치고 다시 올려야 기록할 수 있어요.")
-    confirm = st.checkbox(f"위 {len(known)}개 주차에 초진 {total}명 병합 기록", key="cf_chojin",
+    confirm = st.checkbox(f"위 {len(by_week)}개 주차에 초진 {total}명 병합 기록", key="cf_chojin",
                           disabled=blocked)
     if st.button("📝 초진 기록하기", type="primary",
                  disabled=(not confirm or blocked), key="bt_chojin"):
         oks = 0
-        for wk in sorted(known):
+        for wk in sorted(by_week):
             try:
-                res = write_patients(sid, wk, known[wk], dry_run=False, merge=True)
-                st.success(f"✅ {week_label(wk)} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}명)")
+                res = write_patients(sid, wk, by_week[wk], dry_run=False, merge=True, create_missing=True)
+                tag = " (탭 생성)" if res.get("created") else ""
+                st.success(f"✅ {week_label(wk)}{tag} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}명)")
                 log_upload(branch, "초진", wk, res["추가"], res["갱신"], res["rows"])
                 oks += 1
             except Exception as e:
                 st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
-        if oks == len(known):
+        if oks == len(by_week):
             st.balloons()
 
 
@@ -268,29 +269,30 @@ def render_munui(sid: str, tabs: list, branch: str = ""):
     for wk in sorted(known):
         st.write(f"- **{week_label(wk)}** → 문의 **{len(known[wk])}건** 기록")
     for wk in sorted(absent):
-        st.warning(f"⚠️ '{week_label(wk)}' 문의 {len(absent[wk])}건 — 시트에 그 주차 탭이 없어 못 넣어요 (탭 먼저 생성 필요)")
+        st.info(f"🆕 '{week_label(wk)}' 문의 {len(absent[wk])}건 — 탭이 없어 **자동 생성** 후 기록됩니다")
     if unknown:
         st.warning(f"⚠️ 상담시각을 못 읽은 {len(unknown)}건은 제외됩니다.")
-    if not known:
-        st.error("기록할 주차가 없어요 (해당 주차 탭이 시트에 없음).")
+    if not by_week:
+        st.error("기록할 주차가 없어요.")
         return
-    total = sum(len(v) for v in known.values())
+    total = sum(len(v) for v in by_week.values())
     if blocked_m:
         st.warning("🚫 위 🚫 상담결과(표준값 아님)를 차트에서 고치고 다시 올려야 기록할 수 있어요.")
-    confirm = st.checkbox(f"위 {len(known)}개 주차에 문의 {total}건 병합 기록", key="cf_munui",
+    confirm = st.checkbox(f"위 {len(by_week)}개 주차에 문의 {total}건 병합 기록", key="cf_munui",
                           disabled=blocked_m)
     if st.button("📝 문의 기록하기", type="primary",
                  disabled=(not confirm or blocked_m), key="bt_munui"):
         oks = 0
-        for wk in sorted(known):
+        for wk in sorted(by_week):
             try:
-                res = write_inquiries(sid, wk, known[wk], dry_run=False, merge=True)
-                st.success(f"✅ {week_label(wk)} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}건)")
+                res = write_inquiries(sid, wk, by_week[wk], dry_run=False, merge=True, create_missing=True)
+                tag = " (탭 생성)" if res.get("created") else ""
+                st.success(f"✅ {week_label(wk)}{tag} — 추가 {res['추가']} · 갱신 {res['갱신']} (탭 총 {res['rows']}건)")
                 log_upload(branch, "문의", wk, res["추가"], res["갱신"], res["rows"])
                 oks += 1
             except Exception as e:
                 st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
-        if oks == len(known):
+        if oks == len(by_week):
             st.balloons()
 
 
