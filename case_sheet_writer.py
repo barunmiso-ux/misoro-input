@@ -81,17 +81,18 @@ def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
 
     sh = _svc(key_path)
     titles = _tabs(sh, spreadsheet_id)
-    _created = False
-    if tab not in titles:
-        if create_missing and not dry_run:
-            _ensure_week_tab(sh, spreadsheet_id, tab)
-            _created = True
-        elif not create_missing:
-            raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
-        # create_missing + dry_run → 실기록 때 생성 예정(계획만)
+    _created = _repaired = False
+    if not dry_run:
+        # 실기록 시 탭 구조 검증·복구(빈 손제작탭 방지). dry_run은 시트 미변경.
+        state = _ensure_valid_week_tab(sh, spreadsheet_id, tab, create_missing=create_missing)
+        _created = (state == "created")
+        _repaired = (state == "repaired")
+        titles = _tabs(sh, spreadsheet_id)
+    elif tab not in titles and not create_missing:
+        raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
 
     merged_added = merged_updated = 0
-    if merge and tab in titles:
+    if merge and tab in titles and not _created and not _repaired:
         # 기존 C..Y 읽어 차트(=D, C:Y기준 index1) 키로 upsert. 없으면 이름 키.
         existing = sh.values().get(
             spreadsheetId=spreadsheet_id,
@@ -136,7 +137,7 @@ def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
         "clear_range": clear_range, "write_anchor": write_anchor, "rows": n,
         "보존": "Z+ 상담테이블·157행↓ 수식·앵커 미변경",
         "merge": merge, "추가": merged_added, "갱신": merged_updated,
-        "created": _created, "dry_run": dry_run,
+        "created": _created, "repaired": _repaired, "dry_run": dry_run,
     }
     if dry_run:
         return plan
@@ -184,6 +185,53 @@ def _ensure_week_tab(sh, sid: str, tab: str) -> bool:
     return True
 
 
+def _ensure_valid_week_tab(sh, sid: str, tab: str, *, create_missing: bool) -> str:
+    """주차 탭이 '표준양식 구조'인지 보장하고 상태 문자열 반환.
+
+    - 없음 + create_missing → 템플릿 복제 생성 → 'created'
+    - 있음 + 구조 정상(열 수 = 템플릿) → 'ok'
+    - 있음 + 구조 이상 + 데이터 없음(손으로 만든 빈 탭) → 원위치에 템플릿으로 교체 → 'repaired'
+    - 있음 + 구조 이상 + 데이터 있음(구버전 양식 등) → 자동수정 위험 → 예외
+
+    ⚠️ 과거 사고 방지: 열 수만 다르다고 지우지 않는다. 반드시 '데이터 없음'일 때만 교체.
+    구버전(26열) 과거 탭은 데이터가 있으므로 절대 건드리지 않는다.
+    """
+    meta = sh.get(spreadsheetId=sid,
+                  fields="sheets(properties(sheetId,title,index,gridProperties(columnCount)))").execute()
+    props = {s["properties"]["title"]: s["properties"] for s in meta["sheets"]}
+    if WEEK_TEMPLATE not in props:
+        raise ValueError(f"템플릿 '{WEEK_TEMPLATE}' 없음 — 확인 필요")
+    tmpl = props[WEEK_TEMPLATE]
+    tmpl_cols = tmpl["gridProperties"]["columnCount"]
+
+    if tab not in props:
+        if not create_missing:
+            raise ValueError(f"탭 '{tab}' 없음")
+        sh.batchUpdate(spreadsheetId=sid, body={"requests": [{
+            "duplicateSheet": {"sourceSheetId": tmpl["sheetId"],
+                               "newSheetName": tab, "insertSheetIndex": 0}}]}).execute()
+        return "created"
+
+    p = props[tab]
+    if p["gridProperties"]["columnCount"] == tmpl_cols:
+        return "ok"
+
+    # 구조 이상 — 데이터 유무 확인(환자1행 C5 + 결산 D158)
+    chk = sh.values().batchGet(
+        spreadsheetId=sid, ranges=[f"'{tab}'!C5", f"'{tab}'!D158"]).execute()["valueRanges"]
+    has_data = bool(chk[0].get("values")) or bool(chk[1].get("values"))
+    if has_data:
+        raise ValueError(
+            f"탭 '{tab}' 구조가 표준({tmpl_cols}열)과 다른데 데이터가 있어 자동수정 불가 — "
+            f"수동 확인 필요(구버전 양식일 수 있음)")
+    # 빈 손제작탭 → 원래 위치에 템플릿 복제로 교체
+    sh.batchUpdate(spreadsheetId=sid, body={"requests": [
+        {"deleteSheet": {"sheetId": p["sheetId"]}},
+        {"duplicateSheet": {"sourceSheetId": tmpl["sheetId"],
+                            "newSheetName": tab, "insertSheetIndex": p["index"]}}]}).execute()
+    return "repaired"
+
+
 def write_settlement(spreadsheet_id: str, tab: str, values: dict, *,
                      key_path: str = DEFAULT_KEY, dry_run: bool = True,
                      create_missing: bool = False) -> dict:
@@ -207,12 +255,10 @@ def write_settlement(spreadsheet_id: str, tab: str, values: dict, *,
         return plan
 
     sh = _svc(key_path)
-    if tab not in _tabs(sh, spreadsheet_id):
-        if create_missing:
-            _ensure_week_tab(sh, spreadsheet_id, tab)
-            plan["created"] = True
-        else:
-            raise ValueError(f"탭 '{tab}' 없음")
+    # 탭 구조 검증(빈 손제작탭에 결산을 흘려넣는 사고 방지 — 천안 26-07-2주 사례)
+    state = _ensure_valid_week_tab(sh, spreadsheet_id, tab, create_missing=create_missing)
+    if state in ("created", "repaired"):
+        plan[state] = True
     sh.values().batchUpdate(
         spreadsheetId=spreadsheet_id,
         body={"valueInputOption": "USER_ENTERED", "data": data}).execute()
@@ -237,16 +283,17 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
 
     sh = _svc(key_path)
     titles = _tabs(sh, spreadsheet_id)
-    _created = False
-    if tab not in titles:
-        if create_missing and not dry_run:
-            _ensure_week_tab(sh, spreadsheet_id, tab)
-            _created = True
-        elif not create_missing:
-            raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
+    _created = _repaired = False
+    if not dry_run:
+        state = _ensure_valid_week_tab(sh, spreadsheet_id, tab, create_missing=create_missing)
+        _created = (state == "created")
+        _repaired = (state == "repaired")
+        titles = _tabs(sh, spreadsheet_id)
+    elif tab not in titles and not create_missing:
+        raise ValueError(f"탭 '{tab}' 없음. 가능: {titles[:12]}")
 
     merged_added = merged_updated = 0
-    if merge and tab in titles:
+    if merge and tab in titles and not _created and not _repaired:
         # 기존 AA..AK 읽어 upsert. AA:AK 기준 index 0=상담시각·1=차트·2=성명.
         existing = sh.values().get(
             spreadsheetId=spreadsheet_id,
@@ -294,7 +341,7 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
         "clear_range": clear_range, "write_anchor": write_anchor, "rows": n,
         "보존": "B~Y 초진테이블·157행↓ 수식·앵커 미변경",
         "merge": merge, "추가": merged_added, "갱신": merged_updated,
-        "created": _created, "dry_run": dry_run,
+        "created": _created, "repaired": _repaired, "dry_run": dry_run,
     }
     if dry_run:
         return plan
