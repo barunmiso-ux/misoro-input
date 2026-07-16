@@ -69,7 +69,7 @@ def init_state():
         if key not in st.session_state:
             st.session_state[key] = [_empty_item()]
     if "comments" not in st.session_state:
-        st.session_state["comments"] = [""]
+        st.session_state["comments"] = ["", ""]   # 매일 댓글 2건 기본
 
 
 def _empty_item():
@@ -112,10 +112,11 @@ def apply_prefill(branch, report_date):
     for k in [x for x in st.session_state if x.startswith("comment_")]:
         del st.session_state[k]
 
-    st.session_state["health_cafe"] = act["health_cafe"] if act else ""
-    st.session_state["health_home"] = act["health_home"] if act else ""
-    st.session_state["daily_post"] = act["daily_post"] if act else ""
-    st.session_state["comments"] = (act["comments"] or [""]) if act else [""]
+    st.session_state["column_cafe"] = act["column_cafe"] if act else ""
+    st.session_state["column_home"] = act["column_home"] if act else ""
+    st.session_state["post_url"] = act["post_url"] if act else ""
+    st.session_state["comments"] = (act["comments"] or ["", ""]) if act else ["", ""]
+    st.session_state["consult_reply"] = act.get("consult_reply", "") if act else ""
 
     st.session_state["loaded_for"] = tag
     st.session_state["existing_info"] = existing
@@ -184,17 +185,18 @@ def render_section(sec: dict):
 # 활동 섹션 렌더링
 # ──────────────────────────────────────────────────────────────────
 def render_activity():
-    st.subheader("활동")
+    st.subheader("활동 · 오늘 숙제")
 
-    st.markdown("**건강 칼럼**")
-    health_cafe = st.text_input("카페 URL", key="health_cafe", placeholder="https://...")
-    health_home = st.text_input("홈페이지 URL", key="health_home", placeholder="https://...")
+    # ── 일반 계정 (매일): 게시글 1건 + 댓글 2건 ──
+    st.markdown("**일반 계정** · 매일")
 
-    daily_post = st.text_input(
-        "카페 일상 게시글 URL", key="daily_post", placeholder="https://...",
+    st.markdown("📝 **게시글** · 1건")
+    post_url = st.text_input(
+        "게시글 URL", key="post_url", placeholder="https://cafe.naver.com/...",
+        label_visibility="collapsed",
     )
 
-    st.markdown("**카페 댓글**")
+    st.markdown("💬 **댓글** · 2건")
     comments = st.session_state["comments"]
     remove_idx = None
     for i, _ in enumerate(comments):
@@ -233,13 +235,25 @@ def render_activity():
             help="캡처 안에 들어있는 실제 댓글 개수를 적어주세요.",
         )
 
+    # ── 원장님 계정 (했을 때만) ──
+    st.divider()
+    st.markdown("**원장님 계정** · 했을 때만 (안 한 날은 비워두세요)")
+
+    st.caption("전문가 칼럼 — 주 3회 · 카페 + 홈페이지 병행")
+    column_cafe = st.text_input("전문가 칼럼 카페 URL", key="column_cafe", placeholder="https://cafe.naver.com/...")
+    column_home = st.text_input("전문가 칼럼 홈페이지 URL", key="column_home", placeholder="https://... (병행 필수)")
+
+    st.caption("상담실 답변 — 월 2회 (지정일)")
+    consult_reply = st.text_input("상담실 답변 URL", key="consult_reply", placeholder="https://...")
+
     return {
-        "health_cafe": health_cafe.strip(),
-        "health_home": health_home.strip(),
-        "daily_post": daily_post.strip(),
+        "post_url": post_url.strip(),
         "comments": [c.strip() for c in comments if c.strip()],
         "images": images or [],
         "image_comment_count": int(image_comment_count),
+        "column_cafe": column_cafe.strip(),
+        "column_home": column_home.strip(),
+        "consult_reply": consult_reply.strip(),
     }
 
 
@@ -274,11 +288,12 @@ def build_payload(branch, report_date, activity) -> tuple[dict, list]:
         subtotal = sum(it["count"] for it in items)
         sections[sec["key"]] = {"items": items, "subtotal": subtotal}
 
-    validate_url("건강 카페 URL", activity["health_cafe"], errors)
-    validate_url("건강 홈페이지 URL", activity["health_home"], errors)
-    validate_url("카페 일상 게시글 URL", activity["daily_post"], errors)
+    validate_url("게시글 URL", activity["post_url"], errors)
     for i, c in enumerate(activity["comments"], 1):
         validate_url(f"댓글 {i} URL", c, errors)
+    validate_url("전문가 칼럼 카페 URL", activity["column_cafe"], errors)
+    validate_url("전문가 칼럼 홈페이지 URL", activity["column_home"], errors)
+    validate_url("상담실 답변 URL", activity["consult_reply"], errors)
 
     payload = {
         "branch": branch,
@@ -301,11 +316,11 @@ def summarize(payload: dict) -> str:
     a = payload["activity"]
     mark = lambda v: "✓" if v else "✗"
     comment_n = a.get("comment_count", len(a["comments"]))
-    act = (
-        f"건강[카페{mark(a['health_cafe'])} 홈{mark(a['health_home'])}] "
-        f"일상{mark(a['daily_post'])} "
-        f"댓글{comment_n}건"
-    )
+    act = f"게시글{mark(a['post_url'])} 댓글{comment_n}건"
+    if a.get("column_cafe") or a.get("column_home"):
+        act += f" · 칼럼{mark(a.get('column_cafe') or a.get('column_home'))}"
+    if a.get("consult_reply"):
+        act += " · 상담답변✓"
     return (
         f"{payload['branch']} {payload['date']:%m.%d} 기록 완료: "
         f"{counts} | 활동: {act}"

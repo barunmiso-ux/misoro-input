@@ -170,7 +170,7 @@ def _now_str() -> str:
 def read_existing(branch: str, report_date) -> dict | None:
     """(branch, report_date) 기존 기록. 없으면 None. daily 한 번 + 카페숙제 한 번(batchGet)."""
     daily_name = config.daily_sheet_name(report_date)
-    grid, hw = _vbatch_get([_q(daily_name, "A:AG"), _q(config.HOMEWORK_TAB, "A:I")])
+    grid, hw = _vbatch_get([_q(daily_name, "A:AG"), _q(config.HOMEWORK_TAB, "A:J")])
 
     out = {"daily": {}, "activity": None}
     try:
@@ -186,10 +186,11 @@ def read_existing(branch: str, report_date) -> dict | None:
         if _cell(hw, ri, 0) == d and _cell(hw, ri, 1) == branch:
             comments_raw = hw[ri][6] if len(hw[ri]) > 6 else ""
             out["activity"] = {
-                "health_cafe": hw[ri][2] if len(hw[ri]) > 2 else "",
-                "health_home": hw[ri][3] if len(hw[ri]) > 3 else "",
-                "daily_post": hw[ri][4] if len(hw[ri]) > 4 else "",
+                "column_cafe": hw[ri][2] if len(hw[ri]) > 2 else "",
+                "column_home": hw[ri][3] if len(hw[ri]) > 3 else "",
+                "post_url": hw[ri][4] if len(hw[ri]) > 4 else "",
                 "comments": [c for c in comments_raw.split("\n") if c.strip()],
+                "consult_reply": hw[ri][9] if len(hw[ri]) > 9 else "",
             }
             break
 
@@ -237,14 +238,16 @@ def write_submission(payload: dict) -> dict:
 
 
 def _upsert_homework(payload: dict):
-    vals = _vget(_q(config.HOMEWORK_TAB, "A:I"))
+    vals = _vget(_q(config.HOMEWORK_TAB, "A:J"))
     d = payload["date"].isoformat()
     branch = payload["branch"]
     a = payload["activity"]
     count = a.get("comment_count", len(a["comments"]))
+    # 컬럼: 날짜·지점·칼럼카페·칼럼홈페·게시글·댓글수·댓글URL·입력자·기록시각·상담답변
     record = [
-        d, branch, a["health_cafe"], a["health_home"], a["daily_post"],
+        d, branch, a.get("column_cafe", ""), a.get("column_home", ""), a.get("post_url", ""),
         str(count), "\n".join(a["comments"]), payload["writer"], _now_str(),
+        a.get("consult_reply", ""),
     ]
 
     target = None
@@ -253,9 +256,9 @@ def _upsert_homework(payload: dict):
             target = ri
             break
     if target is not None:
-        _vupdate(_q(config.HOMEWORK_TAB, f"A{target + 1}:I{target + 1}"), [record])
+        _vupdate(_q(config.HOMEWORK_TAB, f"A{target + 1}:J{target + 1}"), [record])
     else:
-        _vappend(_q(config.HOMEWORK_TAB, "A:I"), [record])
+        _vappend(_q(config.HOMEWORK_TAB, "A:J"), [record])
 
 
 def _replace_detail(payload: dict) -> int:
