@@ -1,0 +1,45 @@
+name: homework-check
+
+# 카페 숙제 3주기 컴플라이언스 → 지점 잔디 촉구.
+#   daily   : 매일 20:00 KST — 게시글1·댓글2 미달
+#   weekly  : 매주 월 08:00 KST — 전문가 칼럼 주3회 미달(지난주)
+#   monthly : 매월 2일 07:00 KST — 상담실 답변 월2회 미달(지난달)
+# 알림은 homework_check.START_DATE(2026-07-20)부터 유효 — 그 전엔 자동 조용.
+# 필요: 리포 Secret 'GCP_SA_KEY'.
+
+on:
+  schedule:
+    - cron: "0 11 * * *"      # 매일 11:00 UTC = 20:00 KST → daily
+    - cron: "0 23 * * 0"      # 일 23:00 UTC = 월 08:00 KST → weekly
+    - cron: "0 22 1 * *"      # 1일 22:00 UTC = 2일 07:00 KST → monthly
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "daily | weekly | monthly"
+        default: "daily"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 의존성 설치
+        run: pip install --quiet google-auth google-api-python-client requests
+      - name: 모드 결정
+        run: |
+          case "${{ github.event.schedule }}" in
+            "0 11 * * *") echo "MODE=daily" >> $GITHUB_ENV ;;
+            "0 23 * * 0") echo "MODE=weekly" >> $GITHUB_ENV ;;
+            "0 22 1 * *") echo "MODE=monthly" >> $GITHUB_ENV ;;
+            *) echo "MODE=${{ github.event.inputs.mode || 'daily' }}" >> $GITHUB_ENV ;;
+          esac
+      - name: 숙제 체크
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: python homework_check.py "$MODE" --commit

@@ -194,7 +194,30 @@ def read_existing(branch: str, report_date) -> dict | None:
             }
             break
 
-    has_any = bool(out["activity"]) or any(v.strip() for v in out["daily"].values())
+    # 뱃지용 누적: 이번 주 칼럼(월~일, 오늘 제외) · 이번 달 상담(오늘 제외)
+    import datetime as _dt
+    wk_start = report_date - _dt.timedelta(days=report_date.weekday())
+    wk_end = wk_start + _dt.timedelta(days=6)
+    ym = (report_date.year, report_date.month)
+    week_column = month_consult = 0
+    for ri in range(1, len(hw)):
+        if _cell(hw, ri, 1) != branch:
+            continue
+        try:
+            rd = _dt.date.fromisoformat(_cell(hw, ri, 0))
+        except ValueError:
+            continue
+        if rd == report_date:
+            continue  # 오늘은 폼에서 실시간 반영
+        if wk_start <= rd <= wk_end and (_cell(hw, ri, 2).strip() or _cell(hw, ri, 3).strip()):
+            week_column += 1
+        if (rd.year, rd.month) == ym and _cell(hw, ri, 9).strip():
+            month_consult += 1
+    out["week_column"] = week_column
+    out["month_consult"] = month_consult
+
+    has_any = (bool(out["activity"]) or any(v.strip() for v in out["daily"].values())
+               or week_column or month_consult)
     return out if has_any else None
 
 

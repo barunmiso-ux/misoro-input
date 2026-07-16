@@ -184,11 +184,39 @@ def render_section(sec: dict):
 # ──────────────────────────────────────────────────────────────────
 # 활동 섹션 렌더링
 # ──────────────────────────────────────────────────────────────────
+def _badge(label: str, done: int, need: str, ok: bool) -> str:
+    color, bg = ("#1a7f37", "#dafbe1") if ok else ("#9a6700", "#fff8c5")
+    icon = "✓" if ok else "!"
+    return (f'<span style="background:{bg};color:{color};padding:2px 9px;border-radius:6px;'
+            f'font-size:12px;font-weight:600;margin-right:6px;white-space:nowrap;">'
+            f'{icon} {label} {done}/{need}</span>')
+
+
+def _homework_badges():
+    """현재 입력값 + 이번주/이번달 누적으로 진행 뱃지 HTML."""
+    info = st.session_state.get("existing_info") or {}
+    post = 1 if (st.session_state.get("post_url") or "").strip() else 0
+    cmts = st.session_state.get("comments", [])
+    n_cmt = sum(1 for c in cmts if (c or "").strip()) + int(st.session_state.get("img_comment_count", 0) or 0)
+    col_today = 1 if ((st.session_state.get("column_cafe") or "").strip()
+                      or (st.session_state.get("column_home") or "").strip()) else 0
+    consult_today = 1 if (st.session_state.get("consult_reply") or "").strip() else 0
+    week_col = int(info.get("week_column", 0)) + col_today
+    month_con = int(info.get("month_consult", 0)) + consult_today
+    daily = (_badge("게시글", post, "1", post >= 1) + _badge("댓글", n_cmt, "2", n_cmt >= 2))
+    doctor = (_badge("칼럼 이번주", week_col, "3", week_col >= 3)
+              + _badge("상담 이번달", month_con, "2", month_con >= 2))
+    return daily, doctor
+
+
 def render_activity():
     st.subheader("활동 · 오늘 숙제")
 
+    daily_badges, doctor_badges = _homework_badges()
+
     # ── 일반 계정 (매일): 게시글 1건 + 댓글 2건 ──
     st.markdown("**일반 계정** · 매일")
+    st.markdown(daily_badges, unsafe_allow_html=True)
 
     st.markdown("📝 **게시글** · 1건")
     post_url = st.text_input(
@@ -238,6 +266,7 @@ def render_activity():
     # ── 원장님 계정 (했을 때만) ──
     st.divider()
     st.markdown("**원장님 계정** · 했을 때만 (안 한 날은 비워두세요)")
+    st.markdown(doctor_badges, unsafe_allow_html=True)
 
     st.caption("전문가 칼럼 — 주 3회 · 카페 + 홈페이지 병행")
     column_cafe = st.text_input("전문가 칼럼 카페 URL", key="column_cafe", placeholder="https://cafe.naver.com/...")
