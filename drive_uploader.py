@@ -55,17 +55,18 @@ def _service():
 
 def _shrink(data: bytes, mimetype: str | None):
     """큰 이미지만 최대 2000px + JPEG로 축소(텍스트 가독성 유지). 작으면·실패하면 원본 그대로.
-    메모리·드라이브 용량 절감용. Pillow 없거나 오류 나면 안전하게 원본 반환."""
+    메모리·드라이브 절감. draft()로 디코딩 단계부터 저해상도로 읽어 피크 메모리를 최소화
+    (4000px 폰 사진의 풀 비트맵 ~48MB를 안 만든다) → Pillow 네이티브 크래시 위험도 완화.
+    Pillow 없거나 오류 나면 안전하게 원본 반환."""
+    if len(data) <= 1_200_000:      # ~1.2MB 이하면 손 안 댐
+        return data, mimetype
+    im = None
     try:
         from io import BytesIO
         from PIL import Image
-        if max(len(data), 0) <= 1_200_000:      # ~1.2MB 이하면 손 안 댐
-            return data, mimetype
         im = Image.open(BytesIO(data))
-        w, h = im.size
-        if max(w, h) > 2000:
-            r = 2000 / max(w, h)
-            im = im.resize((int(w * r), int(h * r)))
+        im.draft("RGB", (2000, 2000))       # JPEG 디코더에 저해상 힌트(PNG 등은 무시)
+        im.thumbnail((2000, 2000))          # 제자리 축소(새 풀 비트맵 안 만듦), 비율 유지
         if im.mode in ("RGBA", "P", "LA"):
             im = im.convert("RGB")
         out = BytesIO()
@@ -73,6 +74,12 @@ def _shrink(data: bytes, mimetype: str | None):
         return out.getvalue(), "image/jpeg"
     except Exception:  # noqa: BLE001
         return data, mimetype
+    finally:
+        if im is not None:
+            try:
+                im.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def upload_image(data: bytes, filename: str, mimetype: str | None) -> str:

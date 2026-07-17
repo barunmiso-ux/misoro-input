@@ -8,3 +8,6 @@ font = "sans serif"
 
 [server]
 headless = true
+maxUploadSize = 25        # MB. 댓글 캡처는 작음 — 기본 200MB 업로드가 OOM 유발하는 것 차단
+fileWatcherType = "none"  # Cloud는 배포 시 프로세스 재시작 → 런타임 파일감시 불필요(오버헤드 절감)
+maxMessageSize = 50       # MB. 웹소켓 메시지 상한
