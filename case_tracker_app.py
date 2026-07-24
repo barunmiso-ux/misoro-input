@@ -82,6 +82,21 @@ def _week_selectbox(tabs: list, inferred, winfo: dict, key: str) -> str:
 # ──────────────────────────────────────────────────────────────────
 # 초진 탭
 # ──────────────────────────────────────────────────────────────────
+@st.dialog("⚠️ 아직 안 끝났어요!")
+def _record_reminder(kind_label: str, ack_key: str, fid: str):
+    """업로드 직후 뜨는 확인 모달 — 파일만 올리고 끝낸 줄 아는 사고 방지."""
+    st.markdown(
+        f"**{kind_label} 파일을 올렸을 뿐, 시트엔 아직 아무것도 저장 안 됐습니다.**\n\n"
+        "이 화면을 **끝까지 아래로 내려서** 👇\n\n"
+        "**① 체크박스 ✅  →  ② 파란색 「📝 기록하기」 버튼 클릭**\n\n"
+        "그러면 **🎈 풍선이 날아갑니다. 풍선이 떠야 진짜 끝난 거예요.**\n\n"
+        "🎈 풍선 안 떴으면 = **안 올라간 겁니다.** 다시 확인하세요."
+    )
+    if st.button("네, 아래로 내려가서 기록 버튼 누를게요", type="primary", use_container_width=True):
+        st.session_state[ack_key] = fid
+        st.rerun()
+
+
 def render_chojin(sid: str, tabs: list, branch: str = ""):
     up = st.file_uploader("초진 export — 환자검색결과 (.xls/.xlsx)", type=["xls", "xlsx"], key="up_chojin")
     if not up:
@@ -94,6 +109,10 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
     except Exception as e:
         st.error(f"파일을 읽지 못했습니다: {e}")
         return
+    # 업로드 직후: 아직 기록 안 됐고 확인모달도 안 눌렀으면 팝업 강제
+    _fid = f"초진:{up.name}:{getattr(up, 'size', 0)}"
+    if st.session_state.get("saved_fid_chojin") != _fid and st.session_state.get("ack_chojin") != _fid:
+        _record_reminder("초진", "ack_chojin", _fid)
 
     s = parsed["summary"]
     st.subheader("미리보기")
@@ -195,10 +214,9 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
     fid = f"초진:{up.name}:{getattr(up, 'size', 0)}"
     saved = st.session_state.get("saved_fid_chojin") == fid
     if not saved and not blocked:
-        st.error("### ⚠️ 아직 저장 안 됐습니다!\n"
-                 "**파일을 올린 것만으로는 끝이 아니에요.** 아래 순서를 꼭 하세요:\n\n"
-                 "**① 체크박스 ✅ → ② 파란색 「📝 초진 기록하기」 버튼 클릭**\n\n"
-                 "버튼을 안 누르면 시트에 **아무것도 안 들어갑니다.**")
+        st.error("### ⚠️ 여기서 끝내면 안 됩니다!\n"
+                 "**① 아래 체크박스 ✅ → ② 파란색 「📝 초진 기록하기」 → ③ 🎈 풍선이 뜨면 완료!**\n\n"
+                 "🎈 **풍선이 떠야 시트에 저장된 거예요.** 안 뜨면 안 올라간 겁니다.")
     confirm = st.checkbox(f"위 {len(by_week)}개 주차에 초진 {total}명 병합 기록", key="cf_chojin",
                           disabled=blocked)
     if st.button("📝 초진 기록하기", type="primary",
@@ -217,8 +235,8 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
             st.session_state["saved_fid_chojin"] = fid
             st.balloons()
     if saved:
-        st.success("### ✅ 저장 완료!\n시트에 기록됐습니다. **이제 창을 닫으셔도 됩니다.** "
-                   "(다른 주차·다른 파일을 올리려면 위에서 새 파일을 선택하세요.)")
+        st.success("### 🎈 저장 완료!\n풍선 봤죠? 시트에 기록됐습니다. **이제 창을 닫으셔도 됩니다.** "
+                   "(다른 파일을 올리려면 위에서 새 파일을 선택하세요.)")
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -236,6 +254,9 @@ def render_munui(sid: str, tabs: list, branch: str = ""):
     except Exception as e:
         st.error(f"파일을 읽지 못했습니다: {e}")
         return
+    _fid = f"문의:{up.name}:{getattr(up, 'size', 0)}"
+    if st.session_state.get("saved_fid_munui") != _fid and st.session_state.get("ack_munui") != _fid:
+        _record_reminder("문의", "ack_munui", _fid)
 
     s = parsed["summary"]
     st.subheader("미리보기")
@@ -293,10 +314,9 @@ def render_munui(sid: str, tabs: list, branch: str = ""):
     fid = f"문의:{up.name}:{getattr(up, 'size', 0)}"
     saved = st.session_state.get("saved_fid_munui") == fid
     if not saved and not blocked_m:
-        st.error("### ⚠️ 아직 저장 안 됐습니다!\n"
-                 "**파일을 올린 것만으로는 끝이 아니에요.** 아래 순서를 꼭 하세요:\n\n"
-                 "**① 체크박스 ✅ → ② 파란색 「📝 문의 기록하기」 버튼 클릭**\n\n"
-                 "버튼을 안 누르면 시트에 **아무것도 안 들어갑니다.**")
+        st.error("### ⚠️ 여기서 끝내면 안 됩니다!\n"
+                 "**① 아래 체크박스 ✅ → ② 파란색 「📝 문의 기록하기」 → ③ 🎈 풍선이 뜨면 완료!**\n\n"
+                 "🎈 **풍선이 떠야 시트에 저장된 거예요.** 안 뜨면 안 올라간 겁니다.")
     confirm = st.checkbox(f"위 {len(by_week)}개 주차에 문의 {total}건 병합 기록", key="cf_munui",
                           disabled=blocked_m)
     if st.button("📝 문의 기록하기", type="primary",
@@ -315,7 +335,7 @@ def render_munui(sid: str, tabs: list, branch: str = ""):
             st.session_state["saved_fid_munui"] = fid
             st.balloons()
     if saved:
-        st.success("### ✅ 저장 완료!\n시트에 기록됐습니다. **이제 창을 닫으셔도 됩니다.** "
+        st.success("### 🎈 저장 완료!\n풍선 봤죠? 시트에 기록됐습니다. **이제 창을 닫으셔도 됩니다.** "
                    "(다른 파일을 올리려면 위에서 새 파일을 선택하세요.)")
 
 
