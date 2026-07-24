@@ -16,9 +16,37 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import re
 
-from case_sheet_writer import _svc, aggregate_month
+from case_sheet_writer import _svc, aggregate_month, write_settlement
 from create_week_tabs import BRANCH_SHEETS, STD_TPL
+
+# 결산 직접입력 셀 (write_settlement 키 → 주간탭 읽기 셀)
+SETTLE_CELLS = {"매출": "D158", "환불": "D159", "총내원": "D166", "신환내원": "D167"}
+
+
+def _num(x) -> float:
+    return float(re.sub(r"[^0-9.\-]", "", str(x)) or 0)
+
+
+def sum_weekly_settlement(sh, sid: str, weeks: list) -> dict:
+    """그 달 주간탭들의 결산(매출·환불·총내원·신환)을 합산. 월경계주는 이미 월별로
+    클램프돼 있어(collect_settlement 기간결산) 이중계상 없음. 월간=주간합 검증필(<0.05%)."""
+    keys = list(SETTLE_CELLS.keys())
+    ranges = [f"'{w}'!{SETTLE_CELLS[k]}" for w in weeks for k in keys]
+    vr = sh.values().batchGet(spreadsheetId=sid, ranges=ranges).execute().get("valueRanges", [])
+    total = {k: 0.0 for k in keys}
+    for i in range(len(weeks)):
+        for j, k in enumerate(keys):
+            cell = vr[len(keys) * i + j].get("values", [])
+            total[k] += _num(cell[0][0] if cell and cell[0] else "")
+    return {k: round(v) for k, v in total.items()}
+
+
+def monthly_settlement_empty(sh, sid: str, month_tab: str) -> bool:
+    """월간탭 매출(D158)이 비어있으면 True(=주간합으로 채울 대상). 기존 OKTAS 월말값 보호."""
+    v = sh.values().get(spreadsheetId=sid, range=f"'{month_tab}'!D158").execute().get("values", [])
+    return _num(v[0][0] if v and v[0] else "") == 0
 
 
 def prev_month_prefix(today: datetime.date) -> str:
@@ -67,26 +95,39 @@ def main():
             titles_ids = {s["properties"]["title"]: s["properties"]["sheetId"]
                           for s in meta["sheets"]}
             status, created = ensure_month_tab(sh, sid, month_tab, titles_ids, dry)
-
-            # 집계 대상: 방금 만든 탭 or (--refresh 로) 기존 탭
-            do_agg = created or (args.refresh and month_tab in titles_ids)
-            if not do_agg:
-                print(f"[{name}] {month_tab}: {status}")
-                continue
+            exists = created or (month_tab in titles_ids)
 
             all_tabs = list(titles_ids.keys())
             if month_tab not in all_tabs:
                 all_tabs.append(month_tab)   # 방금 생성분
             weeks = [t for t in all_tabs if t.startswith(month + "-") and "주" in t]
-            if not weeks:
-                print(f"[{name}] {month_tab}: {status} · ⚠️ 주간탭 없어 집계 생략")
-                continue
-            if dry:
-                print(f"[{name}] {month_tab}: {status} · 집계 예정 (주간 {len(weeks)}개)")
-                continue
-            res = aggregate_month(sid, month, all_tabs, dry_run=False)
-            print(f"[{name}] {month_tab}: {status} · 집계완료 "
-                  f"초진 {res['초진합계']} · 문의 {res['문의합계']} (주간 {len(res['weeks'])}개)")
+
+            # ① 환자명단 집계: 방금 만든 탭 or (--refresh 로) 기존 탭
+            do_agg = created or (args.refresh and month_tab in titles_ids)
+            notes = []
+            if do_agg:
+                if not weeks:
+                    notes.append("⚠️ 주간탭 없어 집계 생략")
+                elif dry:
+                    notes.append(f"집계 예정 (주간 {len(weeks)}개)")
+                else:
+                    res = aggregate_month(sid, month, all_tabs, dry_run=False)
+                    notes.append(f"집계완료 초진 {res['초진합계']} · 문의 {res['문의합계']}")
+
+            # ② 결산 채우기: 월간 결산이 비어있으면 주간합으로(기존 OKTAS 월말값은 보존)
+            if exists and weeks:
+                if dry:
+                    if created:
+                        notes.append("결산 주간합 예정")
+                    elif monthly_settlement_empty(sh, sid, month_tab):
+                        notes.append("결산 비어있음 → 주간합 예정")
+                elif monthly_settlement_empty(sh, sid, month_tab):
+                    s = sum_weekly_settlement(sh, sid, weeks)
+                    write_settlement(sid, month_tab, s, dry_run=False)
+                    notes.append(f"결산기록 매출 {s['매출']:,} · 신환 {s['신환내원']}")
+
+            print(f"[{name}] {month_tab}: {status}"
+                  + (" · " + " · ".join(notes) if notes else ""))
         except Exception as e:
             print(f"[{name}] {month_tab} 실패: {type(e).__name__}: {e}")
 
