@@ -18,7 +18,7 @@ from datetime import datetime, timezone, timedelta
 from export_parser import (parse_export, rows_for_sheet, infer_week_tab,
                            parse_inquiries, inquiry_rows_for_sheet, inquiry_week_tab,
                            week_label, rows_for_sheet_by_week, inquiry_rows_by_week,
-                           to_standard_treatment, normalize_result)
+                           to_standard_treatment, normalize_result, _classify_disease)
 from case_sheet_writer import write_patients, write_inquiries, aggregate_month, _svc
 from upload_log import log_upload
 from noshow_matcher import match_inquiries, set_override
@@ -160,7 +160,20 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
     질환공란 = [p for p in pts if not (p.disease or "").strip()]
     구조이상 = len(pts) >= 2 and len(질환공란) >= len(pts) * 0.5
 
-    blocked = bool(미완성) or bool(엉뚱) or 구조이상
+    # ── 경증 차단: 비예약원인 '경증'은 금지, '급성'으로만. ('경증'은 만성후보를 급성으로 오분류하는 주관적 표현)
+    경증 = [(p.chart_no, (p.name[:1] + "*") if p.name else "")
+            for p in pts if "경증" in (p.no_resv_reason or "")]
+    # ── 비예약원인 공란 차단: 특화(피부·호흡기)인데 진료봤으나 미결제(일반치료·상담만·특화치료)면
+    #    왜 미전환인지(급성/비용/거리/상의/의지/기타) 반드시 기입해야 함. 공란=차단.
+    비예약공란 = []
+    for p in pts:
+        if _classify_disease(p.disease or "")[0] not in ("피부", "호흡기"):
+            continue
+        std, _ = to_standard_treatment(p.treatment_raw or "")
+        if std in ("일반치료", "상담만", "특화치료") and not (p.no_resv_reason or "").strip():
+            비예약공란.append((p.chart_no, (p.name[:1] + "*") if p.name else "", p.disease))
+
+    blocked = bool(미완성) or bool(엉뚱) or 구조이상 or bool(경증) or bool(비예약공란)
 
     if 구조이상:
         st.error(f"🚫 **export 구조가 표준과 안 맞습니다 — 초진 {len(pts)}명 중 "
@@ -176,6 +189,15 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
         for chart, nm, raw in 엉뚱:
             st.write(f"- 차트 **{chart}** {nm}: `{raw}` → 표준값"
                      "(한약N달·약침패키지·첩약보험·특화치료·일반치료·상담만·그냥감) 중 하나로")
+    if 경증:
+        st.error(f"🚫 **비예약원인 '경증' {len(경증)}건 — '경증'은 못 씁니다. 차트에서 '급성'으로 고쳐 다시 올려주세요.**")
+        for chart, nm in 경증:
+            st.write(f"- 차트 **{chart}** {nm}: 비예약원인 `경증` → **`급성`**")
+    if 비예약공란:
+        st.error(f"🚫 **비예약원인 공란 {len(비예약공란)}건 — 특화질환 미결제인데 사유가 없습니다. "
+                 "차트 비예약원인에 급성/비용/거리/상의/의지/기타 중 하나를 채워야 기록됩니다.**")
+        for chart, nm, dis in 비예약공란:
+            st.write(f"- 차트 **{chart}** {nm} ({dis}) → 비예약원인 채우기")
     if 자동교정:
         with st.expander(f"✏️ 표준값으로 자동 변환되어 기록될 진행치료 {len(자동교정)}건 (조치 불필요)"):
             for chart, raw, std in 자동교정:
