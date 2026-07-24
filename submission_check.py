@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import re
 import time
 
 import requests
@@ -76,6 +77,51 @@ def _num(cell):
     return int("".join(ch for ch in str(cell) if ch.isdigit()) or 0)
 
 
+def _reg_date(s):
+    m = re.search(r"(\d{4})[-./](\d{1,2})[-./](\d{1,2})", str(s))
+    if not m:
+        return None
+    try:
+        return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except ValueError:
+        return None
+
+
+def _filter_monthly_held(sh, sid, existing, misses):
+    """miss 주차 중 '초진 미제출'이지만 그 주 환자가 월간탭에 등록돼 있으면(=월경계 조각주·수기월간)
+    진짜 누락 아님 → 제외. 반환 (진짜누락[], 월간보유[(주,인원)])."""
+    month_of = {wt: wt.rsplit("-", 1)[0] + "월" for wt, _, mm in misses if "초진" in mm}
+    mtabs = sorted({m for m in month_of.values() if m in existing})
+    if not mtabs:
+        return misses, []
+    rngs = []
+    for mt in mtabs:
+        rngs += [f"'{mt}'!C5:C154", f"'{mt}'!N5:N154"]
+    vr = sh.values().batchGet(spreadsheetId=sid, ranges=rngs).execute().get("valueRanges", [])
+    monthly = {}   # 월간탭 -> [등록일]
+    for j, mt in enumerate(mtabs):
+        names = vr[j*2].get("values", [])
+        regs = vr[j*2+1].get("values", [])
+        dts = []
+        for k in range(len(names)):
+            if names[k] and str(names[k][0]).strip():
+                d = _reg_date(regs[k][0]) if k < len(regs) and regs[k] else None
+                if d:
+                    dts.append(d)
+        monthly[mt] = dts
+    real, held = [], []
+    for wt, exp, mm in misses:
+        mt = month_of.get(wt)
+        if mt and mt in monthly:
+            lo, hi = week_rule.range_for_tab(wt)
+            cnt = sum(1 for d in monthly[mt] if lo <= d <= hi)
+            if cnt > 0:
+                held.append((wt, cnt))
+                continue
+        real.append((wt, exp, mm))
+    return real, held
+
+
 def check(week_tabs, commit: bool = False):
     """week_tabs = 검사할 주차 목록(최근 N주). 지점당 1콜 배치로 읽고 누락 주차 모아 통합 알림."""
     if isinstance(week_tabs, str):
@@ -105,8 +151,14 @@ def check(week_tabs, commit: bool = False):
                     if mm:
                         misses.append((wt, exp, mm))
             time.sleep(1)                             # 레이트리밋 여유
+            # 월간 교차확인: 주간탭 비었어도 그 주 환자가 월간탭에 등록돼 있으면 알림 제외
+            if misses:
+                misses, held = _filter_monthly_held(sh, sid, existing, misses)
+                for wt, cnt in held:
+                    print(f"    ℹ️ {name} {wt}: 주간탭 비었으나 월간탭에 {cnt}명 등록됨 → 알림 제외")
+                time.sleep(1)
             if not misses:
-                print(f"[{name}] 최근 {len(week_tabs)}주 제출 정상 ✅ (또는 신환0)")
+                print(f"[{name}] 최근 {len(week_tabs)}주 제출 정상 ✅ (월간보유/신환0 포함)")
                 continue
             lines = [f"· {week_label(wt)}" for wt, _, _ in misses]
             msg = (f"[{name}] 업로드 기록이 없는 주간 통계입니다.\n"
