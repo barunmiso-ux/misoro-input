@@ -191,6 +191,14 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
     total = sum(len(v) for v in by_week.values())
     if blocked:
         st.warning("🚫 위 🚫 항목(미완성·표준값 아님)을 차트에서 고치고 다시 올려야 기록할 수 있어요.")
+    # 파일 식별자 — 이 파일이 실제 기록됐는지 추적(업로드만 하고 버튼 안 누르는 사고 방지)
+    fid = f"초진:{up.name}:{getattr(up, 'size', 0)}"
+    saved = st.session_state.get("saved_fid_chojin") == fid
+    if not saved and not blocked:
+        st.error("### ⚠️ 아직 저장 안 됐습니다!\n"
+                 "**파일을 올린 것만으로는 끝이 아니에요.** 아래 순서를 꼭 하세요:\n\n"
+                 "**① 체크박스 ✅ → ② 파란색 「📝 초진 기록하기」 버튼 클릭**\n\n"
+                 "버튼을 안 누르면 시트에 **아무것도 안 들어갑니다.**")
     confirm = st.checkbox(f"위 {len(by_week)}개 주차에 초진 {total}명 병합 기록", key="cf_chojin",
                           disabled=blocked)
     if st.button("📝 초진 기록하기", type="primary",
@@ -206,7 +214,11 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
             except Exception as e:
                 st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
         if oks == len(by_week):
+            st.session_state["saved_fid_chojin"] = fid
             st.balloons()
+    if saved:
+        st.success("### ✅ 저장 완료!\n시트에 기록됐습니다. **이제 창을 닫으셔도 됩니다.** "
+                   "(다른 주차·다른 파일을 올리려면 위에서 새 파일을 선택하세요.)")
 
 
 # ──────────────────────────────────────────────────────────────────
@@ -278,6 +290,13 @@ def render_munui(sid: str, tabs: list, branch: str = ""):
     total = sum(len(v) for v in by_week.values())
     if blocked_m:
         st.warning("🚫 위 🚫 상담결과(표준값 아님)를 차트에서 고치고 다시 올려야 기록할 수 있어요.")
+    fid = f"문의:{up.name}:{getattr(up, 'size', 0)}"
+    saved = st.session_state.get("saved_fid_munui") == fid
+    if not saved and not blocked_m:
+        st.error("### ⚠️ 아직 저장 안 됐습니다!\n"
+                 "**파일을 올린 것만으로는 끝이 아니에요.** 아래 순서를 꼭 하세요:\n\n"
+                 "**① 체크박스 ✅ → ② 파란색 「📝 문의 기록하기」 버튼 클릭**\n\n"
+                 "버튼을 안 누르면 시트에 **아무것도 안 들어갑니다.**")
     confirm = st.checkbox(f"위 {len(by_week)}개 주차에 문의 {total}건 병합 기록", key="cf_munui",
                           disabled=blocked_m)
     if st.button("📝 문의 기록하기", type="primary",
@@ -293,7 +312,11 @@ def render_munui(sid: str, tabs: list, branch: str = ""):
             except Exception as e:
                 st.error(f"❌ {week_label(wk)} 기록 실패: {e}")
         if oks == len(by_week):
+            st.session_state["saved_fid_munui"] = fid
             st.balloons()
+    if saved:
+        st.success("### ✅ 저장 완료!\n시트에 기록됐습니다. **이제 창을 닫으셔도 됩니다.** "
+                   "(다른 파일을 올리려면 위에서 새 파일을 선택하세요.)")
 
 
 @st.cache_data(ttl=300, show_spinner="문의↔초진 매칭 중…")

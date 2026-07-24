@@ -12,11 +12,13 @@
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, date
 
 from case_sheet_writer import _svc, DEFAULT_KEY, _tabs
 from export_parser import (classify_treatment, _classify_disease, PAID_OUTCOMES,
                            normalize_result)
+import week_rule
 
 DEFAULT_WINDOW_DAYS = 14
 OVERRIDE_TAB = "_노쇼보정"       # 별도 탭(주간시트 구조 미변경). 수기보정 저장.
@@ -76,15 +78,31 @@ def set_override(sid: str, key: str, status: str, writer: str = "", *,
 # 초진 C5:Y154 → 0:이름(C) 1:차트(D) 3:전화(F) 4:휴대폰(G) 11:등록일(N) 15:질환(R) 16:주치의(S) 20:진행치료(W)
 CH_NAME, CH_CHART, CH_PHONE, CH_MOBILE, CH_REG = 0, 1, 3, 4, 11
 CH_DISEASE, CH_DOCTOR, CH_TREAT = 15, 16, 20
+CH_REASON = 22   # 22:비예약원인(Y) — '경증'=급성(진료만 보고 간) 마커
 # 문의 AA5:AI139 → 0:상담시각(AA) 1:차트(AB) 2:성명(AC) 3:전화(AD) 4:상담구분(AE) 6:진료구분(AG) 7:상담결과(AH) 8:상담자(AI)
 IQ_TIME, IQ_CHART, IQ_NAME, IQ_PHONE, IQ_DISEASE, IQ_RESULT = 0, 1, 2, 3, 6, 7
 IQ_CHANNEL, IQ_COUNSELOR = 4, 8
+
+# 급성 판정 — 비예약원인(Y열) 값. '급성'=표준(2026-07 확정), '경증'=레거시(대전·전주·천안 구입력).
+ACUTE_MARKERS = ("급성", "경증")
+
+
+def _is_acute(reason) -> bool:
+    s = str(reason)
+    return any(m in s for m in ACUTE_MARKERS)
 
 
 def _pdate(s):
     s = str(s or "").strip()
     if not s:
         return None
+    # 한국식 점 형식 'YYYY. M. D'(공백 포함, 수기 6월분) — split 전에 처리
+    m = re.match(r"(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})", s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
     s = s.split()[0]
     for fmt in ("%Y-%m-%d", "%m/%d/%y", "%m/%d/%Y", "%Y/%m/%d"):
         try:
@@ -168,6 +186,7 @@ def _load(sid: str, tabs: list, key_path: str = DEFAULT_KEY, default_counselor: 
                 "doctor": _cell(row, CH_DOCTOR),
                 "group": _classify_disease(_cell(row, CH_DISEASE))[0],
                 "outcome": classify_treatment(_cell(row, CH_TREAT)),
+                "reason": _cell(row, CH_REASON),   # 비예약원인 — '경증'=급성
             })
         vi += 1
         if not iq_ok:
@@ -225,32 +244,44 @@ def _periods_of(week_tab: str) -> tuple:
 
 
 def aggregate_doctors(result: dict) -> dict:
-    """기간별 × 주치의(원장) 특화 결제전환율. 반환 {period: {doctor: {...}}}.
+    """기간별 × 주치의(원장) 특화 결제전환율. 만성/급성 분리. 반환 {period: {doctor: {...}}}.
 
-    결제전환율 = 결제(한약+약침+첩약보험) / (특화초진 − 그냥감).
+    만성 결제전환율 = 만성결제 / (특화초진 − 급성 − 만성그냥감).
+    급성(경증) = 비예약원인(Y열)='경증' = 상담 안 하고 진료만 보고 간 급성환자.
+      한의원·환자 수요불일치라 대부분 미전환 → **만성 결제전환율 분모서 제외**(별도 산정).
+      드물게 전환되면 급성전환율에 반영. (사용자 확정 2026-07)
     특화(피부·호흡기)만 대상 — 통증·기타는 결제 대상 아니라 제외(시트 한약결제율 정의와 일치).
     각 초진을 자기 주차와 그 달 양쪽에 집계.
     """
     from collections import defaultdict
-    agg = defaultdict(lambda: defaultdict(lambda: {"특화초진": 0, "그냥감": 0, "결제": 0}))
+    agg = defaultdict(lambda: defaultdict(
+        lambda: {"특화초진": 0, "그냥감": 0, "결제": 0, "급성": 0, "급성결제": 0}))
     for c in result.get("chojin", []):
         if c.get("group") not in ("피부", "호흡기"):
             continue
         doc = c.get("doctor") or "(미기입)"
+        acute = _is_acute(c.get("reason", ""))   # 급성 마커(비예약원인, '급성' 표준·'경증' 레거시)
+        paid = c["outcome"] in PAID_OUTCOMES
         for p in _periods_of(c["week"]):
             a = agg[p][doc]
             a["특화초진"] += 1
-            if c["outcome"] == "그냥감":
+            if acute:                       # 급성(경증) — 만성 분모서 제외, 별도 집계
+                a["급성"] += 1
+                if paid:
+                    a["급성결제"] += 1
+            elif c["outcome"] == "그냥감":   # 만성 이탈(완전)
                 a["그냥감"] += 1
-            elif c["outcome"] in PAID_OUTCOMES:
+            elif paid:                      # 만성 결제(전환)
                 a["결제"] += 1
     out = {}
     for p, docs in agg.items():
         out[p] = {}
         for doc, a in docs.items():
-            denom = a["특화초진"] - a["그냥감"]
+            # 만성 분모 = 특화초진 − 급성(경증) − 만성그냥감
+            denom = a["특화초진"] - a["급성"] - a["그냥감"]
             a["진료"] = denom
             a["결제전환율"] = round(a["결제"] / denom, 4) if denom else None
+            a["급성전환율"] = round(a["급성결제"] / a["급성"], 4) if a["급성"] else None
             out[p][doc] = a
     return out
 
@@ -258,14 +289,16 @@ def aggregate_doctors(result: dict) -> dict:
 def aggregate_counselors(result: dict) -> dict:
     """기간별 × 상담자 내원율·결제율. 반환 {period: {counselor: {...}}}.
 
-    내원율 = 내원 / (내원+노쇼)  — 예약 잡은 사람이 진짜 왔나(노쇼 책임).
-    결제율 = 결제 / (내원+노쇼)  — 그중 결제까지 이어졌나. (결제 ⊆ 내원이라 결제율 ≤ 내원율.)
+    결제율(만성) = 결제 / (내원 + 노쇼 − 급성내원)  — 급성(경증)은 만성결제 대상 아니라 분모서 제외.
+      급성내원 = 내원했으나 비예약원인='경증'(급성) — 상담자 결제율을 부당하게 깎지 않게 뺌.
+    (내원율=내원/(내원+노쇼)은 대시보드 미표시라 삭제. 문의전환율=내원/예약완료는 대시보드가 직접 계산.)
     상담구분(진료상담/전화상담) 분리. 내원대기·데이터대기·판정불가는 분모서 제외.
     각 문의를 자기 주차와 그 달 양쪽에 집계. 수기보정(_노쇼보정) 반영됨.
     """
     from collections import defaultdict
     agg = defaultdict(lambda: defaultdict(lambda: {"예약완료": 0, "내원": 0, "노쇼": 0,
-                                                   "결제": 0, "진료상담": 0, "전화상담": 0}))
+                                                   "결제": 0, "급성내원": 0,
+                                                   "진료상담": 0, "전화상담": 0}))
     for r in result["rows"]:
         who = r.get("counselor") or "(미기입)"
         for p in _periods_of(r["week"]):
@@ -278,7 +311,10 @@ def aggregate_counselors(result: dict) -> dict:
                 a["진료상담"] += 1
             if r["status"] == "전환":
                 a["내원"] += 1
-                if (r.get("matched") or {}).get("outcome") in PAID_OUTCOMES:
+                m = r.get("matched") or {}
+                if _is_acute(m.get("reason", "")):   # 급성 내원 — 결제율 분모서 제외
+                    a["급성내원"] += 1
+                if m.get("outcome") in PAID_OUTCOMES:
                     a["결제"] += 1
             elif r["status"] == "노쇼":
                 a["노쇼"] += 1
@@ -288,8 +324,8 @@ def aggregate_counselors(result: dict) -> dict:
         for who, a in cous.items():
             denom = a["내원"] + a["노쇼"]
             a["확정"] = denom
-            a["내원율"] = round(a["내원"] / denom, 4) if denom else None
-            a["결제율"] = round(a["결제"] / denom, 4) if denom else None
+            pay_denom = denom - a["급성내원"]         # 만성 결제율 분모(급성 제외)
+            a["결제율"] = round(a["결제"] / pay_denom, 4) if pay_denom else None
             out[p][who] = a
     return out
 
@@ -313,10 +349,9 @@ def _match(iq, chojin, window_days, hi_override=None):
     return None, ""
 
 
-def _week_tab_of(d, sample_tab):
-    """날짜 d 가 속한 주 탭명 추정 'YY-MM-N주'."""
-    wk = ((d.day - 1) // 7) + 1
-    return f"{d.year % 100:02d}-{d.month:02d}-{wk}주"
+def _week_tab_of(d, sample_tab=None):
+    """날짜 d 가 속한 주 탭명 'YY-MM-N주'. 전 앱 단일 기준 week_rule 사용(월~일·월경계 분할)."""
+    return week_rule.tab_name(d)
 
 
 def match_inquiries(sid: str, asof, tabs: list, *, window_days: int = DEFAULT_WINDOW_DAYS,
@@ -351,7 +386,8 @@ def match_inquiries(sid: str, asof, tabs: list, *, window_days: int = DEFAULT_WI
             c, method = _match(iq, chojin, window_days, hi_override=until)
             if c:
                 status, note = "전환", f"{c['week']} 초진 ({c['reg']}) · {method}매칭"
-                matched = {"week": c["week"], "reg": str(c["reg"]), "outcome": c.get("outcome", "")}
+                matched = {"week": c["week"], "reg": str(c["reg"]), "outcome": c.get("outcome", ""),
+                           "reason": c.get("reason", "")}   # 경증=급성(상담자 결제율 분모 제외용)
             elif asof <= deadline:
                 status = "내원대기"
                 note = (f"예약일 {until}까지 지켜봄 (D-{(deadline - asof).days})" if until
