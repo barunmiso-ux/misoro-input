@@ -161,8 +161,11 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
     구조이상 = len(pts) >= 2 and len(질환공란) >= len(pts) * 0.5
 
     # ── 경증 차단: 비예약원인 '경증'은 금지, '급성'으로만. ('경증'은 만성후보를 급성으로 오분류하는 주관적 표현)
+    #    사유는 특화(피부·호흡기) 미전환 판단에만 쓰이므로 비특화(통증·기타)는 제외 — 비예약공란 차단과 동일 스코프.
     경증 = [(p.chart_no, (p.name[:1] + "*") if p.name else "")
-            for p in pts if "경증" in (p.no_resv_reason or "")]
+            for p in pts
+            if _classify_disease(p.disease or "")[0] in ("피부", "호흡기")
+            and "경증" in (p.no_resv_reason or "")]
     # ── 비예약원인 공란 차단: 특화(피부·호흡기)인데 진료봤으나 미결제(일반치료·상담만·특화치료)면
     #    왜 미전환인지(급성/비용/거리/상의/의지/기타) 반드시 기입해야 함. 공란=차단.
     비예약공란 = []
