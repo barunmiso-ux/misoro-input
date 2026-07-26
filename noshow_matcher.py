@@ -219,22 +219,36 @@ def aggregate_by_period(result: dict) -> dict:
 
     def _blank():
         return {"문의수": 0, "전환": 0, "노쇼": 0, "내원대기": 0, "데이터대기": 0, "판정불가": 0,
-                "특화문의수": 0, "특화전환": 0}
+                "특화문의수": 0, "특화전환": 0, "특화전체문의": 0, "특화결제": 0}
 
     agg = defaultdict(_blank)
+    # 4단계 퍼널 '문의' 단계 = 예약완료+예약안함 전체 특화 문의(예약완료만 세는 rows 대신 inquiries 순회)
+    for q in result.get("inquiries", []):
+        if not q.get("time"):
+            continue
+        if _classify_disease(q.get("disease", ""))[0] not in ("피부", "호흡기"):
+            continue
+        wk = q.get("week", "")
+        mo = wk.rsplit("-", 1)[0] + "월" if "-" in wk else wk
+        for period in (wk, mo):
+            if period:
+                agg[period]["특화전체문의"] += 1
     for r in result["rows"]:
         wk = r["week"]                          # '26-06-3주'
         mo = wk.rsplit("-", 1)[0] + "월"        # '26-06월'
         # 문의 시점 질환(진료구분)으로 특화(피부·호흡기) 여부 판정 — 특화 일관 퍼널용
         is_spec = _classify_disease(r.get("disease", ""))[0] in ("피부", "호흡기")
+        paid = bool(r.get("matched") and r["matched"].get("outcome") in PAID_OUTCOMES)
         for period in (wk, mo):
             a = agg[period]
             a["문의수"] += 1
             a[r["status"]] = a.get(r["status"], 0) + 1
             if is_spec:
-                a["특화문의수"] += 1
+                a["특화문의수"] += 1                   # 예약완료 특화(=퍼널 '예약' 단계)
                 if r["status"] == "전환":
-                    a["특화전환"] += 1
+                    a["특화전환"] += 1                 # 특화 내원(예약완료 전환)
+                    if paid:
+                        a["특화결제"] += 1             # 그 내원환자 실제 결제(코호트 일관)
     out = {}
     for p, a in agg.items():
         denom = a["전환"] + a["노쇼"]
@@ -429,6 +443,7 @@ def match_inquiries(sid: str, asof, tabs: list, *, window_days: int = DEFAULT_WI
         "확정전환율": (converted / (converted + counts["노쇼"])) if (converted + counts["노쇼"]) else None,
         "rows": rows,
         "chojin": chojin,
+        "inquiries": inquiries,   # 전체 문의(예약안함 포함) — 4단계 퍼널 '문의' 단계용
     }
 
 
