@@ -218,16 +218,23 @@ def aggregate_by_period(result: dict) -> dict:
     from collections import defaultdict
 
     def _blank():
-        return {"문의수": 0, "전환": 0, "노쇼": 0, "내원대기": 0, "데이터대기": 0, "판정불가": 0}
+        return {"문의수": 0, "전환": 0, "노쇼": 0, "내원대기": 0, "데이터대기": 0, "판정불가": 0,
+                "특화문의수": 0, "특화전환": 0}
 
     agg = defaultdict(_blank)
     for r in result["rows"]:
         wk = r["week"]                          # '26-06-3주'
         mo = wk.rsplit("-", 1)[0] + "월"        # '26-06월'
+        # 문의 시점 질환(진료구분)으로 특화(피부·호흡기) 여부 판정 — 특화 일관 퍼널용
+        is_spec = _classify_disease(r.get("disease", ""))[0] in ("피부", "호흡기")
         for period in (wk, mo):
             a = agg[period]
             a["문의수"] += 1
             a[r["status"]] = a.get(r["status"], 0) + 1
+            if is_spec:
+                a["특화문의수"] += 1
+                if r["status"] == "전환":
+                    a["특화전환"] += 1
     out = {}
     for p, a in agg.items():
         denom = a["전환"] + a["노쇼"]
