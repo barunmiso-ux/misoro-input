@@ -4,14 +4,16 @@ name: homework-check
 #   daily   : 매일 20:00 KST — 게시글1·댓글2 미달
 #   weekly  : 매주 월 08:00 KST — 전문가 칼럼 주3회 미달(지난주)
 #   monthly : 매월 2일 07:00 KST — 상담실 답변 월2회 미달(지난달)
-# 알림은 homework_check.START_DATE(2026-07-20)부터 유효 — 그 전엔 자동 조용.
+# [은퇴 2026-07-27] 숙제 재촉이 misoro-daily-gas(GAS)로 이관됨 → 자동 스케줄 중단(중복 방지).
+#   대체: misoro-daily-gas Homework.gs — dailyMissingCheck/checkDailyHomework/checkWeeklyHomework/checkMonthlyHomework
+#   수동 실행(workflow_dispatch)만 남겨둠(비상시). 완전 삭제해도 무방.
 # 필요: 리포 Secret 'GCP_SA_KEY'.
 
 on:
-  schedule:
-    - cron: "0 11 * * *"      # 매일 11:00 UTC = 20:00 KST → daily
-    - cron: "0 23 * * 0"      # 일 23:00 UTC = 월 08:00 KST → weekly
-    - cron: "0 22 1 * *"      # 1일 22:00 UTC = 2일 07:00 KST → monthly
+  # schedule:  # ← GAS 이관으로 비활성화 (중복 발송 방지)
+  #   - cron: "0 11 * * *"      # 매일 11:00 UTC = 20:00 KST → daily
+  #   - cron: "0 23 * * 0"      # 일 23:00 UTC = 월 08:00 KST → weekly
+  #   - cron: "0 22 1 * *"      # 1일 22:00 UTC = 2일 07:00 KST → monthly
   workflow_dispatch:
     inputs:
       mode:
