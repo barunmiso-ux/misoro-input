@@ -114,14 +114,18 @@ def main():
                     res = aggregate_month(sid, month, all_tabs, dry_run=False)
                     notes.append(f"집계완료 초진 {res['초진합계']} · 문의 {res['문의합계']}")
 
-            # ② 결산 채우기: 월간 결산이 비어있으면 주간합으로(기존 OKTAS 월말값은 보존)
+            # ② 결산 채우기: 비어있으면 주간합으로. --refresh 면 기존값도 다시 계산.
+            #    월 중에 한 번 채워진 뒤 주가 더 쌓이면 그 값이 부분합인 채로 굳어,
+            #    같은 탭에서 초진명단 27명 vs 신환 23 처럼 어긋났음(2026-07-29).
+            #    --refresh = '주간탭 최종본으로 재집계'이므로 결산도 같이 갱신하는 게 일관됨.
             if exists and weeks:
+                do_settle = args.refresh or monthly_settlement_empty(sh, sid, month_tab)
                 if dry:
                     if created:
                         notes.append("결산 주간합 예정")
-                    elif monthly_settlement_empty(sh, sid, month_tab):
-                        notes.append("결산 비어있음 → 주간합 예정")
-                elif monthly_settlement_empty(sh, sid, month_tab):
+                    elif do_settle:
+                        notes.append("결산 주간합 재계산 예정" if args.refresh else "결산 비어있음 → 주간합 예정")
+                elif do_settle:
                     s = sum_weekly_settlement(sh, sid, weeks)
                     write_settlement(sid, month_tab, s, dry_run=False)
                     notes.append(f"결산기록 매출 {s['매출']:,} · 신환 {s['신환내원']}")

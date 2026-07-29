@@ -4,6 +4,11 @@ name: create-weekly-tab
 # 지점이 주말/월초에 export 올릴 때 탭이 이미 있어 바로 기록되게 함.
 # 안전망으로 '이번 주' 탭도 함께 보장(이미 있으면 skip — idempotent).
 # 주차 규칙은 앱(export_parser)과 동일: 그 날짜의 '월 + week_of_month(일)'.
+#
+# + 이번달 월간탭 주간 재집계(2026-07-29 추가):
+#   월간탭은 monthly-stat-tab.yml(매월 1일)에만 갱신돼, 월 중에는 원장들이 보는 월탭이
+#   열흘 넘게 뒤처졌음(7/29 기준 7월탭이 7/18까지만). 주 1회 --refresh 로 최신화.
+#   clear-then-write라 재실행해도 중복 없음. 결산(157행↓)은 비어있을 때만 주간합으로 채움.
 # 필요: 리포 Secret 'GCP_SA_KEY' (서비스계정 JSON 내용).
 
 on:
@@ -33,3 +38,10 @@ jobs:
           python create_week_tabs.py --commit --date "$NEXT"
           echo "== 이번 주 (안전망) =="
           python create_week_tabs.py --commit
+      - name: 이번달 월간탭 재집계 (원장 열람용 최신화)
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          CUR=$(TZ=Asia/Seoul date +%y-%m)
+          echo "== 이번달 재집계 ($CUR) =="
+          python create_month_tabs.py --month "$CUR" --commit --refresh
