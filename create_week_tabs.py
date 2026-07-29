@@ -87,8 +87,10 @@ def ensure_week_tab(sh, sid, week_tab: str, dry_run: bool = True) -> str:
     sh.batchUpdate(spreadsheetId=sid, body={"requests": [
         {"duplicateSheet": {"sourceSheetId": src_gid, "newSheetName": week_tab}}
     ]}).execute()
-    if mode == "copy_clear":
-        _clear_new_tab(sh, sid, week_tab)
+    # 템플릿 복제여도 항상 클리어 — 템플릿에 값이 남아 있으면 매주 새 탭에 그대로 딸려간다.
+    #   (평택 _표준양식_주간 D158/D166/D167에 과거 결산값이 박혀 있어 새 주차마다 복사돼,
+    #    주간흐름 대시보드가 진행중 주를 '평택만 값 있음'으로 잘못 집계한 사고. 2026-07-29)
+    _clear_new_tab(sh, sid, week_tab)
     return f"✅ 생성됨 (← '{src_title}', {tag})"
 
 
