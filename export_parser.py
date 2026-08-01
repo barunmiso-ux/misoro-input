@@ -86,13 +86,51 @@ def _s(v) -> str:
     return "" if v is None or (isinstance(v, float) and pd.isna(v)) else str(v).strip()
 
 
+# ── 결제 판단 대상 질환 ──────────────────────────────────────────
+# 원래는 '특화(피부·호흡기)'만 대상이었다. 아래 셋은 config 상 '기타' 그룹이라 통증과 함께
+# 빠져 있었는데, **한약 결제가 실제로 나오고 환자를 설득하는 과정이 있다**(2026-07 9지점 실측).
+#   보약      — 분당 곽기영 한약1달·평택 이승후 한약6달, 둘 다 결제@
+#   다이어트   — 전주 소희진·고정아 한약3달, 둘 다 결제@
+#   정신과질환 — 평택 홍은혜·김정민 한약6달
+# 그래서 상담자·비예약원인 필수입력과 결제전환율 분모에 포함한다(사용자 확정 2026-08-01).
+#
+# 제외한 것:
+#   첩약보험(생리통·기능성소화불량 등) — 보험 항목이라 결제 설득 성격이 다름(사용자 확정)
+#   입원치료·체형교정 — 7월 전 건이 '일반치료'에 결제여부 공란. 한약 결제 없음
+#   성장질환 — 1건뿐이고 '상담만/결제안함'이라 판단 근거 부족
+#   통증·교통사고 — 결제 대상 아님
+#
+# ⚠️'특화신환'(마케팅 렌즈, 피부+호흡기)과는 다른 개념이다. 그쪽 정의는 건드리지 않는다.
+PAID_TARGET_EXTRA = {"보약", "다이어트", "정신과질환"}
+
+
+def is_paid_target(disease: str) -> bool:
+    """결제 판단(상담자·결제전환율·필수입력) 대상인가 — 피부·호흡기 + PAID_TARGET_EXTRA."""
+    d = _s(disease)
+    if d in PAID_TARGET_EXTRA:
+        return True
+    return _classify_disease(d)[0] in ("피부", "호흡기")
+
+
+# 표기 흔들림 → 표준값. 부분일치 폴백으로도 안 잡히는 것만 넣는다
+# ('지루피부염'은 표준 '지루성피부염'과 글자가 달라 폴백에 안 걸려 **피부질환인데 비특화로
+#  빠졌다** — 대전 안성민 한약3달 결제 건이 원장·상담자 지표에서 통째로 누락. 2026-08-01 발견).
+_ALIAS = {
+    "지루피부염": "지루성피부염",
+    "지루성두피": "지루성두피염",
+    "안면신경마비(첩약보험)": "안면신경마비",
+    "알레르기비염(첩약보험)": "알레르기비염",
+    "기능성소화불량(첩약보험)": "기능성소화불량",
+}
+
+
 def _classify_disease(name: str) -> tuple[str, bool]:
     """질환명 → 시트그룹. 반환 (그룹, 분류성공여부).
 
     정확일치 우선, 실패 시 **부분일치 폴백**(아토피피부염→'아토피' 포함→피부,
     알레르기성비염→'비염'→호흡기). 긴 병명 우선 매칭, '기타*' 카테고리는 폴백 제외.
     """
-    n = _s(name)
+    n = _ALIAS.get(_s(name), _s(name))           # 0) 표기 흔들림 정규화
     if not n:
         return "", True
     grp = _DISEASE_CATEGORY.get(n)               # 1) 정확일치
@@ -273,9 +311,9 @@ def parse_export(path: str) -> dict:
             treatment_raw=traw, no_resv_reason=get("no_resv_reason"),
             registered=get("registered"), last_visit=get("last_visit"),
         )
-        # 완전성(강제입력): 특화질환(피부·호흡기)은 진행치료·결제·상담자·유입 필수.
+        # 완전성(강제입력): 결제 대상(피부·호흡기 + 보약)은 진행치료·결제·상담자·유입 필수.
         # 통증/기타는 전환분석 대상 아니라 선택(강제 안 함).
-        if p.disease_group in ("피부", "호흡기"):
+        if is_paid_target(p.disease):
             for label, val in (("유입경로", p.inflow), ("진행치료", p.treatment_raw),
                                ("결제여부", p.booking if p.booking != "미상" else ""),
                                ("상담자", p.counselor)):
@@ -505,7 +543,15 @@ class Inquiry:
     disease_group: str = ""  # 피부/호흡기/통증기타
     result: str = ""         # 상담결과(예약완료/예약안함/재통화필요…)
     counselor: str = ""
+    phone: str = ""          # 전화번호 — 초진 명단과 잇는 **유일한 키**. 비면 매칭 불가
     booked: object = None    # True(예약완료)/False(예약안함)/None(진행중)
+    missing: list = field(default_factory=list)   # 비어있는 필수칸(전화번호·상담자)
+
+
+def _is_walkin(channel: str) -> bool:
+    """워크인(직내원) — 전화번호 필수에서 면제되는 채널."""
+    c = _s(channel)
+    return "워크인" in c or "직내원" in c
 
 
 def _read_inquiry_df(path: str):
@@ -541,12 +587,22 @@ def parse_inquiries(path: str) -> dict:
             booked = True
         else:
             booked = None
-        inquiries.append(Inquiry(
+        iq = Inquiry(
             consult_time=g(row, "상담시각"), chart_no=g(row, "차트번호"), name=g(row, "성명"),
             channel=g(row, "상담구분"), inflow=g(row, "유입경로"),
             disease=dis, disease_group=grp, result=res,
-            counselor=g(row, "상담자"), booked=booked,
-        ))
+            counselor=g(row, "상담자"), phone=g(row, "전화번호"), booked=booked,
+        )
+        # 완전성(강제입력)
+        #   상담자   — 채널 무관 항상 필수. 비면 상담자별 지표에서 (미기입)으로 빠진다
+        #              (평택 7월 130건 중 53건·안산 21건 전건 공란, 2026-08-01 실측).
+        #   전화번호 — 초진 명단과 잇는 유일한 키라 필수. **단 워크인은 예외** —
+        #              상담만 하고 가면 번호를 받을 이유가 없다(사용자 확정 2026-08-01).
+        if not iq.counselor:
+            iq.missing.append("상담자")
+        if not iq.phone and not _is_walkin(iq.channel):
+            iq.missing.append("전화번호")
+        inquiries.append(iq)
 
     grp_counts = {}
     for i in inquiries:
@@ -564,6 +620,9 @@ def parse_inquiries(path: str) -> dict:
             "예약전환율": (booked / n) if n else 0.0,
             "질환군별": grp_counts,
             "상담구분별": dict(Counter(i.channel for i in inquiries if i.channel)),
+            "미완성": sum(1 for i in inquiries if i.missing),
+            "미완성목록": [(i.consult_time, i.name or "(무명)", "·".join(i.missing))
+                       for i in inquiries if i.missing],
             "상담결과별": dict(Counter(i.result for i in inquiries if i.result)),
             # 비표준 상담결과값(교정필요): 예약@·예약·예약취소 등
             "비표준결과": [((i.name[:1] + "*") if i.name else "무명", i.result)

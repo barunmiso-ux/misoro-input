@@ -18,12 +18,17 @@ from datetime import datetime, timezone, timedelta
 from export_parser import (parse_export, rows_for_sheet, infer_week_tab,
                            parse_inquiries, inquiry_rows_for_sheet, inquiry_week_tab,
                            week_label, rows_for_sheet_by_week, inquiry_rows_by_week,
-                           to_standard_treatment, normalize_result, _classify_disease)
+                           to_standard_treatment, normalize_result, _classify_disease,
+                           is_paid_target)
 from case_sheet_writer import write_patients, write_inquiries, aggregate_month, _svc
 from upload_log import log_upload
 from noshow_matcher import match_inquiries, set_override
 
 _KST = timezone(timedelta(hours=9))
+
+# 문의내역 필수칸(상담자·전화번호) 강제 시작일. 그 전까지는 경고만 띄운다.
+# 지점이 OK차트 상담관리를 채울 시간을 주려는 유예 — 2026-08-01 공지, 2주 뒤 적용.
+INQ_ENFORCE_FROM = "2026-08-15"
 
 # 지점 → 주간통계 스프레드시트 ID (2026-06-30 Drive 확인분; 미확인 지점은 추후 추가)
 BRANCH_SHEETS = {
@@ -161,16 +166,16 @@ def render_chojin(sid: str, tabs: list, branch: str = ""):
     구조이상 = len(pts) >= 2 and len(질환공란) >= len(pts) * 0.5
 
     # ── 경증 차단: 비예약원인 '경증'은 금지, '급성'으로만. ('경증'은 만성후보를 급성으로 오분류하는 주관적 표현)
-    #    사유는 특화(피부·호흡기) 미전환 판단에만 쓰이므로 비특화(통증·기타)는 제외 — 비예약공란 차단과 동일 스코프.
+    #    사유는 결제대상(피부·호흡기+보약) 미전환 판단에만 쓰이므로 그 외는 제외 — 비예약공란과 동일 스코프.
     경증 = [(p.chart_no, (p.name[:1] + "*") if p.name else "")
             for p in pts
-            if _classify_disease(p.disease or "")[0] in ("피부", "호흡기")
+            if is_paid_target(p.disease or "")
             and "경증" in (p.no_resv_reason or "")]
-    # ── 비예약원인 공란 차단: 특화(피부·호흡기)인데 진료봤으나 미결제(일반치료·상담만·특화치료)면
+    # ── 비예약원인 공란 차단: 결제대상(피부·호흡기+보약)인데 진료봤으나 미결제면
     #    왜 미전환인지(급성/비용/거리/상의/의지/기타) 반드시 기입해야 함. 공란=차단.
     비예약공란 = []
     for p in pts:
-        if _classify_disease(p.disease or "")[0] not in ("피부", "호흡기"):
+        if not is_paid_target(p.disease or ""):
             continue
         std, _ = to_standard_treatment(p.treatment_raw or "")
         if std in ("일반치료", "상담만", "특화치료") and not (p.no_resv_reason or "").strip():
@@ -300,7 +305,25 @@ def render_munui(sid: str, tabs: list, branch: str = ""):
     nonstd_r = s.get("비표준결과", [])
     자동_r = [(nm, r, normalize_result(r)) for nm, r in nonstd_r if normalize_result(r) in _STD_R]
     엉뚱_r = [(nm, r) for nm, r in nonstd_r if normalize_result(r) not in _STD_R]
-    blocked_m = bool(엉뚱_r)
+    # ── 필수칸 차단: 전화번호·상담자 ─────────────────────────────
+    #   전화번호 — 문의를 초진 명단과 잇는 **유일한 키**. 비면 그 문의는 전환 판정에서 통째로 빠진다.
+    #   상담자   — 비면 상담자별 지표에서 (미기입)으로 빠진다.
+    #   (평택 7월 130건 중 상담자 53건 공란 — OKCODI 입력 단계부터 비어 있었다. 2026-08-01)
+    # 유예기간: 그 전엔 경고만, 이후 차단. 지점이 OK차트를 채울 시간을 준다.
+    미완성_r = s.get("미완성목록", [])
+    _enforce = datetime.now(_KST).date().isoformat() >= INQ_ENFORCE_FROM
+    blocked_m = bool(엉뚱_r) or (bool(미완성_r) and _enforce)
+    if 미완성_r:
+        head = (f"🚫 **필수칸이 빈 문의 {len(미완성_r)}건 — OK차트 상담관리에서 채워야 기록됩니다.**"
+                if _enforce else
+                f"⚠️ **필수칸이 빈 문의 {len(미완성_r)}건 — {INQ_ENFORCE_FROM}부터는 기록이 막힙니다.**")
+        (st.error if _enforce else st.warning)(head)
+        st.caption("**OK차트 상담관리에 입력**하신 뒤 다시 내려받아 올려주세요. "
+                   "시트에서 고치면 다음 업로드 때 되돌아갑니다.  "
+                   "상담자는 상담자별 지표에, 전화번호는 초진 명단과 잇는 키로 쓰입니다"
+                   "(워크인은 번호 없이도 기록 가능).")
+        st.table([{"상담시각": t[5:16], "성명": nm, "빈 칸": miss}
+                  for t, nm, miss in 미완성_r[:40]])
     if 엉뚱_r:
         st.error(f"🚫 **상담결과 {len(엉뚱_r)}건이 표준값 아님 + 자동변환 불가 — 차트에서 고쳐야 기록됩니다.** "
                  + ", ".join(f"{nm} `{r}`" for nm, r in 엉뚱_r[:8]))

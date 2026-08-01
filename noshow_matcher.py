@@ -16,7 +16,7 @@ import re
 from datetime import datetime, timedelta, date
 
 from case_sheet_writer import _svc, DEFAULT_KEY, _tabs
-from export_parser import (classify_treatment, _classify_disease, PAID_OUTCOMES,
+from export_parser import (classify_treatment, _classify_disease, is_paid_target, PAID_OUTCOMES,
                            normalize_result)
 import week_rule
 
@@ -184,6 +184,7 @@ def _load(sid: str, tabs: list, key_path: str = DEFAULT_KEY, default_counselor: 
                 "phones": {_digits(_cell(row, CH_PHONE)), _digits(_cell(row, CH_MOBILE))} - {""},
                 "reg": reg,
                 "doctor": _cell(row, CH_DOCTOR),
+                "disease": _cell(row, CH_DISEASE),      # 원본 질환명 — 보약 판정에 필요
                 "group": _classify_disease(_cell(row, CH_DISEASE))[0],
                 "outcome": classify_treatment(_cell(row, CH_TREAT)),
                 "reason": _cell(row, CH_REASON),   # 비예약원인 — '경증'=급성
@@ -226,7 +227,7 @@ def aggregate_by_period(result: dict) -> dict:
     for q in result.get("inquiries", []):
         if not q.get("time"):
             continue
-        if _classify_disease(q.get("disease", ""))[0] not in ("피부", "호흡기"):
+        if not is_paid_target(q.get("disease", "")):   # 피부·호흡기 + 보약
             continue
         wk = q.get("week", "")
         mo = wk.rsplit("-", 1)[0] + "월" if "-" in wk else wk
@@ -236,8 +237,8 @@ def aggregate_by_period(result: dict) -> dict:
     for r in result["rows"]:
         wk = r["week"]                          # '26-06-3주'
         mo = wk.rsplit("-", 1)[0] + "월"        # '26-06월'
-        # 문의 시점 질환(진료구분)으로 특화(피부·호흡기) 여부 판정 — 특화 일관 퍼널용
-        is_spec = _classify_disease(r.get("disease", ""))[0] in ("피부", "호흡기")
+        # 문의 시점 질환(진료구분)으로 결제대상(피부·호흡기+보약) 판정 — 일관 퍼널용
+        is_spec = is_paid_target(r.get("disease", ""))
         paid = bool(r.get("matched") and r["matched"].get("outcome") in PAID_OUTCOMES)
         for period in (wk, mo):
             a = agg[period]
@@ -271,14 +272,15 @@ def aggregate_doctors(result: dict) -> dict:
     급성(경증) = 비예약원인(Y열)='경증' = 상담 안 하고 진료만 보고 간 급성환자.
       한의원·환자 수요불일치라 대부분 미전환 → **만성 결제전환율 분모서 제외**(별도 산정).
       드물게 전환되면 급성전환율에 반영. (사용자 확정 2026-07)
-    특화(피부·호흡기)만 대상 — 통증·기타는 결제 대상 아니라 제외(시트 한약결제율 정의와 일치).
+    대상 = 피부·호흡기 + **보약**. 보약도 한약 결제가 나오고 설득 과정이 있어 포함(2026-08-01).
+    통증·기타는 결제 대상 아니라 제외.
     각 초진을 자기 주차와 그 달 양쪽에 집계.
     """
     from collections import defaultdict
     agg = defaultdict(lambda: defaultdict(
         lambda: {"특화초진": 0, "그냥감": 0, "결제": 0, "급성": 0, "급성결제": 0}))
     for c in result.get("chojin", []):
-        if c.get("group") not in ("피부", "호흡기"):
+        if not is_paid_target(c.get("disease", "")):   # 피부·호흡기 + 보약
             continue
         doc = c.get("doctor") or "(미기입)"
         acute = _is_acute(c.get("reason", ""))   # 급성 마커(비예약원인, '급성' 표준·'경증' 레거시)
