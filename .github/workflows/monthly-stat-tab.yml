@@ -1,15 +1,18 @@
 name: create-monthly-stat-tab
 
-# 매월 1일, 지점 통계 '월간탭(YY-MM월)'을 전 지점 시트에 자동 생성 + 집계.
+# 지점 통계 '월간탭(YY-MM월)'을 전 지점 시트에 자동 생성 + 집계.
+#  · 매월 28일 — **다음달 탭 미리 개설**. 월초에 탭이 없어 지점이 못 올리는 공백을 없앤다
+#    (8/1이 토요일이라 8월탭이 없던 사고. 주간 워크플로는 금요일에만 돌아 8/7까지 공백이었음).
 # 주간 자동화(weekly-tab.yml)의 월간판. 주간탭은 자동인데 월간만 수동이라 구멍(안산 26-06/07)이 났었음.
-#  ① 지난달 마감: 완료된 달을 --refresh 로 재집계(그 달 주간탭 최종본으로 확정).
-#  ② 이번달 개설: 새 달 월간탭을 미리 만들어(현재까지 주간 집계) 지점이 바로 볼 수 있게.
+#  · 매월 1일 — ① 지난달 마감: 완료된 달을 --refresh 로 재집계(그 달 주간탭 최종본으로 확정).
+#                ② 이번달 개설: 혹시 28일에 못 만들었으면 여기서 보장(idempotent).
 # 집계는 clear-then-write라 재실행해도 중복 없음. 매출·총내원(157행↓)은 OKTAS 월말결산 몫(안 건드림).
 # 필요: 리포 Secret 'GCP_SA_KEY' (서비스계정 JSON 내용).
 
 on:
   schedule:
-    - cron: "0 6 1 * *"       # 매월 1일 06:00 UTC (= 15:00 KST)
+    - cron: "0 6 28 * *"      # 매월 28일 06:00 UTC (= 15:00 KST) — 다음달 탭 미리 개설
+    - cron: "0 6 1 * *"       # 매월 1일 06:00 UTC (= 15:00 KST) — 지난달 마감 + 보장
   workflow_dispatch:           # 수동 실행
 
 permissions:
@@ -25,13 +28,19 @@ jobs:
           python-version: "3.12"
       - name: 의존성 설치
         run: pip install --quiet google-auth google-api-python-client
-      - name: 지난달 마감 + 이번달 개설
+      - name: 월간탭 개설/마감
         env:
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
-          PREV=$(date -u -d '1 month ago' +%y-%m)
-          CUR=$(date -u +%y-%m)
-          echo "== 지난달 마감 (재집계 $PREV) =="
-          python create_month_tabs.py --month "$PREV" --commit --refresh
-          echo "== 이번달 개설 (생성 $CUR) =="
+          DAY=$(TZ=Asia/Seoul date +%d)
+          PREV=$(TZ=Asia/Seoul date -d '1 month ago' +%y-%m)
+          CUR=$(TZ=Asia/Seoul date +%y-%m)
+          NEXT=$(TZ=Asia/Seoul date -d '1 month' +%y-%m)
+          echo "== 이번달 보장 (생성 $CUR) =="
           python create_month_tabs.py --month "$CUR" --commit
+          echo "== 다음달 미리 개설 (생성 $NEXT) =="
+          python create_month_tabs.py --month "$NEXT" --commit
+          if [ "$DAY" = "01" ]; then
+            echo "== 1일: 지난달 마감 (재집계 $PREV) =="
+            python create_month_tabs.py --month "$PREV" --commit --refresh
+          fi
