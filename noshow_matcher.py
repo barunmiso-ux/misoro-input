@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, date
 
 from case_sheet_writer import _svc, DEFAULT_KEY, _tabs
 from export_parser import (classify_treatment, _classify_disease, is_paid_target, PAID_OUTCOMES,
-                           normalize_result)
+                           normalize_result, ACUTE_MARKERS)
 import week_rule
 
 DEFAULT_WINDOW_DAYS = 14
@@ -83,8 +83,7 @@ CH_REASON = 22   # 22:비예약원인(Y) — '경증'=급성(진료만 보고 �
 IQ_TIME, IQ_CHART, IQ_NAME, IQ_PHONE, IQ_DISEASE, IQ_RESULT = 0, 1, 2, 3, 6, 7
 IQ_CHANNEL, IQ_COUNSELOR = 4, 8
 
-# 급성 판정 — 비예약원인(Y열) 값. '급성'=표준(2026-07 확정), '경증'=레거시(대전·전주·천안 구입력).
-ACUTE_MARKERS = ("급성", "경증")
+# 급성 판정 마커는 export_parser 에 두고 공유한다(상담자 필수입력 면제와 같은 기준).
 
 
 def _is_acute(reason) -> bool:

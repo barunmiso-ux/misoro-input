@@ -103,6 +103,11 @@ def _s(v) -> str:
 # ⚠️'특화신환'(마케팅 렌즈, 피부+호흡기)과는 다른 개념이다. 그쪽 정의는 건드리지 않는다.
 PAID_TARGET_EXTRA = {"보약", "다이어트", "정신과질환"}
 
+# 급성 마커 — 비예약원인(URL 칸) 값. '급성'=표준(2026-07 확정),
+# '경증'=레거시(대전·전주·천안 구입력, 업로드 화면이 차단). 상담 과정이 없는 건이라
+# 만성 결제전환율 분모·상담자 필수입력에서 제외한다.
+ACUTE_MARKERS = ("급성", "경증")
+
 
 def is_paid_target(disease: str) -> bool:
     """결제 판단(상담자·결제전환율·필수입력) 대상인가 — 피부·호흡기 + PAID_TARGET_EXTRA."""
@@ -314,9 +319,18 @@ def parse_export(path: str) -> dict:
         # 완전성(강제입력): 결제 대상(피부·호흡기 + 보약)은 진행치료·결제·상담자·유입 필수.
         # 통증/기타는 전환분석 대상 아니라 선택(강제 안 함).
         if is_paid_target(p.disease):
-            for label, val in (("유입경로", p.inflow), ("진행치료", p.treatment_raw),
-                               ("결제여부", p.booking if p.booking != "미상" else ""),
-                               ("상담자", p.counselor)):
+            # 상담자는 **상담이 있었던 건만** 필수. 다음 둘은 애초에 상담 과정이 없다:
+            #   그냥감 — 진료도 안 보고 이탈. 상담자가 있을 수 없다.
+            #   급성   — 진료만 보고 감(비예약원인 '급성'). 결제 설득 과정이 없다.
+            # 없던 상담자를 억지로 적게 하면 '내 성과로 잡힐까' 걱정에 오히려 공란이 늘고,
+            # 적힌 이름도 실제 상담 실적이 아니라 지표를 흐린다(2026-08 지점 피드백).
+            _no_consult = (p.outcome == "그냥감"
+                           or any(m in (p.no_resv_reason or "") for m in ACUTE_MARKERS))
+            need = [("유입경로", p.inflow), ("진행치료", p.treatment_raw),
+                    ("결제여부", p.booking if p.booking != "미상" else "")]
+            if not _no_consult:
+                need.append(("상담자", p.counselor))
+            for label, val in need:
                 if not val:
                     p.missing.append(label)
             # 비표준 진행치료값(흡수는 되지만 교정 유도)
