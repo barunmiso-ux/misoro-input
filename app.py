@@ -390,9 +390,16 @@ def main():
 
     init_state()
 
-    st.subheader("초진·문의")
-    for sec in config.INQUIRY_SECTIONS:
-        render_section(sec)
+    crm_branch = branch in getattr(config, "CRM_BRANCHES", ())
+    if crm_branch:
+        # 이 지점은 문의·초진을 원내 CRM에 적는다. 여기서 또 세면 두 숫자가 갈린다.
+        st.info("**초진·문의는 원내 CRM에 입력하세요.** "
+                "매일 밤 자동으로 주간시트·일일보고에 반영됩니다. "
+                "이 화면에서는 아래 **카페 숙제만** 적으시면 됩니다.")
+    else:
+        st.subheader("초진·문의")
+        for sec in config.INQUIRY_SECTIONS:
+            render_section(sec)
 
     activity = render_activity()
 
@@ -436,7 +443,9 @@ def main():
             try:
                 res = sheet_writer.write_submission(payload)
                 st.success("✅ " + summarize(payload))
-                if not res.get("daily_range"):
+                if res.get("crm_branch"):
+                    st.info("카페 숙제가 기록됐습니다. 초진·문의는 CRM에서 밤에 자동 반영됩니다.")
+                elif not res.get("daily_range"):
                     st.info("이번 달 일일집계 탭이 아직 준비 안 돼 상세·활동만 기록됐어요. 관리자에게 알려주세요 (곧 반영됩니다).")
                 _cached_existing.clear()           # 캐시 무효화
                 st.session_state["loaded_for"] = None  # 배너 갱신

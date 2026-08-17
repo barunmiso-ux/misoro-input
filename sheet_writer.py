@@ -233,6 +233,12 @@ def write_submission(payload: dict) -> dict:
     #    월별 탭이 아직 없거나(월 초 미생성) 구조 문제면 일일탭만 건너뛰고 계속 진행
     #    (카페숙제·초진상세는 기록 → 제출이 실패하지 않음)
     a1 = None
+    if branch in getattr(config, "CRM_BRANCHES", ()):
+        # CRM 지점: 채널칸은 crm_sync.py 가 CRM 원본에서 채운다. 여기서 쓰면
+        # 폼이 비어 있는 만큼 0으로 덮어써 버린다. 카페숙제·초진상세만 기록.
+        _upsert_homework(payload)
+        return {"ok": True, "daily_range": None, "crm_branch": True,
+                "detail_rows": _replace_detail(payload)}
     try:
         grid = _vget(_q(daily_name, "A:AG"))
         hdr_row, colmap = build_column_map(grid, branch)
