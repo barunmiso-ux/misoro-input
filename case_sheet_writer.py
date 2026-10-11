@@ -20,8 +20,72 @@
 """
 from __future__ import annotations
 
+import datetime as _dt
+import re as _re
+
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
+
+# ── 상담시각 정규화 ────────────────────────────────────────────
+# 예전에는 OKTAS가 준 시각 **문자열을 그대로** USER_ENTERED 로 넘겨 시트가 알아서
+# 해석하게 뒀다. '26/08/06 11:36' 같은 값은 연-월-일인지 월-일-연인지 시트가 알 수 없어
+# 회차마다 다르게 읽혔고(2008-06-26 / 2026-08-06), 같은 문의가 서로 다른 날짜 값이 되어
+# 중복 판정('성명|상담시각')을 통과해 줄이 늘었다.
+#   → 2026-08 실측: 9지점 1,405행 중 138행(9.8%)이 이렇게 불어난 중복.
+# 이제 **파이썬이 날짜를 확정해 시트 일련값(숫자)으로 넣는다.** 시트가 다시 해석할
+# 여지가 없으므로 몇 번을 올려도 같은 문의는 항상 같은 값이 된다.
+_SHEET_EPOCH = _dt.datetime(1899, 12, 30)
+
+
+def to_serial(v):
+    """상담시각/다음콜시각 → 구글시트 날짜 일련값(float). 못 읽으면 None.
+
+    구분자와 자리순서가 제각각이라 **후보를 순서대로 시도해 처음 유효한 날짜**를 쓴다.
+    ⚠️'10/26/08' 을 연-월-일(2010-26-08)로만 보고 포기하면 안 된다 — 월이 26이라
+      무효이므로 다음 후보(월-일-연 = 2008-10-26)로 넘어가야 한다.
+    """
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)                      # 이미 시트 일련값
+    t = str(v or "").strip().replace("T", " ")
+    if not t:
+        return None
+    m = _re.match(r"^(\d{1,4})[-/.](\d{1,2})[-/.](\d{1,4})[ ]+(\d{1,2}):(\d{2})(?::(\d{2}))?", t)
+    if not m:
+        return None
+    a, b, c = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    H, M, S = int(m.group(4)), int(m.group(5)), int(m.group(6) or 0)
+    y4 = lambda y: y + 2000 if y < 100 else y
+    cands = []
+    if len(m.group(1)) == 4:
+        cands.append((a, b, c))              # YYYY-MM-DD
+    else:
+        cands.append((y4(a), b, c))          # YY-MM-DD  (26/08/06)
+        cands.append((y4(c), a, b))          # MM/DD/YY  (8/6/26 · 10/26/08)
+        cands.append((y4(c), b, a))          # DD/MM/YY
+    ok = []
+    for y, mo, d in cands:
+        try:
+            ok.append(_dt.datetime(y, mo, d, H, M, S))
+        except ValueError:
+            continue
+    if not ok:
+        return None
+    # '8/6/26' 은 2008-06-26(연/월/일)로도, 2026-08-06(월/일/연)으로도 읽힌다.
+    # 운영 연도(2020~2035)에 드는 해석을 우선한다. 없으면 첫 후보를 쓴다.
+    best = next((x for x in ok if 2020 <= x.year <= 2035), ok[0])
+    return (best - _SHEET_EPOCH).total_seconds() / 86400.0
+
+
+def _minute_key(v):
+    """분 단위로 **내림**한 시각 키. 초 단위 오차로 중복이 새는 것을 막는다.
+    ⚠️반올림하면 11:36:34 가 11:37 로 올라가 초 없는 같은 문의와 어긋난다."""
+    s = to_serial(v)
+    if s is None:
+        return None
+    import math as _m
+    return int(_m.floor(s * 1440 + 1e-6))
 
 PATIENT_FIRST_ROW = 5
 PATIENT_LAST_ROW = 154    # 시트 수식 COUNTIF 범위 상한(>=153). 그 아래는 절대 미변경.
@@ -280,6 +344,14 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
     for i, r in enumerate(rows11):
         if len(r) != INQ_EXPECTED_COLS:
             raise ValueError(f"{i}행 열수 오류: {len(r)} (기대 {INQ_EXPECTED_COLS})")
+    # 시각칸(0 상담시각·10 다음콜시각)을 시트 일련값으로 확정해 넣는다.
+    # 읽을 수 없는 값은 원본을 남겨 지점이 눈으로 찾을 수 있게 한다.
+    rows11 = [list(r) for r in rows11]
+    for r in rows11:
+        for ci in (0, 10):
+            sv = to_serial(r[ci])
+            if sv is not None:
+                r[ci] = sv
 
     sh = _svc(key_path)
     titles = _tabs(sh, spreadsheet_id)
@@ -295,9 +367,12 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
     merged_added = merged_updated = 0
     if merge and tab in titles and not _created and not _repaired:
         # 기존 AA..AK 읽어 upsert. AA:AK 기준 index 0=상담시각·1=차트·2=성명.
+        # ⚠️FORMATTED_VALUE 로 읽으면 '8/6/26'·'6/26/08' 같은 표시문자열이 와서 같은
+        #   문의가 달라 보인다. 원시값(일련값)으로 읽어 숫자끼리 비교한다.
         existing = sh.values().get(
             spreadsheetId=spreadsheet_id,
-            range=f"'{tab}'!AA{INQ_FIRST_ROW}:AK{INQ_LAST_ROW}"
+            range=f"'{tab}'!AA{INQ_FIRST_ROW}:AK{INQ_LAST_ROW}",
+            valueRenderOption="UNFORMATTED_VALUE"
         ).execute().get("values", [])
 
         def _keyof(r):
@@ -305,8 +380,10 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
             if chart:
                 return chart
             name = str(r[2]).strip() if len(r) > 2 else ""
-            tm = str(r[0]).strip() if len(r) > 0 else ""
-            return f"{name}|{tm}"
+            phone = "".join(ch for ch in str(r[3] if len(r) > 3 else "") if ch.isdigit())
+            mk = _minute_key(r[0] if len(r) > 0 else "")
+            tm = str(mk) if mk is not None else str(r[0]).strip()
+            return f"{name}|{tm}|{phone}"
 
         by_key, order = {}, []
         for r in existing:
