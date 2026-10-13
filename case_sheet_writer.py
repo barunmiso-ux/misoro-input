@@ -438,6 +438,13 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
     sh.values().update(spreadsheetId=spreadsheet_id, range=write_anchor,
                        valueInputOption="USER_ENTERED", body={"values": values}).execute()
     plan["written"] = True
+    # 시각칸(AA 상담시각·AK 다음콜시각)은 일련값(숫자)으로 넣으므로 날짜 서식을 함께 준다.
+    # 서식이 없던 칸(예전에 글자로 저장됐던 칸)은 '46283.50556' 처럼 숫자로 보여 지점이 못 읽고,
+    # 표시값으로 날짜를 읽는 집계(노쇼·전환 매칭)도 '판정불가'가 됐다(2026-10-13).
+    try:
+        _date_format_cols(sh, spreadsheet_id, tab, ["AA", "AK"], INQ_FIRST_ROW, INQ_FIRST_ROW + n - 1)
+    except Exception:  # noqa: BLE001 — 서식 실패가 기록을 막지 않게
+        pass
     if verify:
         got = sh.values().get(
             spreadsheetId=spreadsheet_id,
@@ -446,6 +453,30 @@ def write_inquiries(spreadsheet_id: str, tab: str, rows11: list, *,
         plan["verify_rows"] = len(got)
         plan["verify_ok"] = (len(got) == n)
     return plan
+
+
+DATE_TIME_PATTERN = "M/D/YY h:mm"   # 기존 문의표 시각칸과 같은 표시
+
+
+def _col_index(letters: str) -> int:
+    n = 0
+    for ch in letters:
+        n = n * 26 + (ord(ch) - 64)
+    return n - 1
+
+
+def _date_format_cols(sh, sid: str, tab: str, cols: list, r1: int, r2: int):
+    """tab 의 cols(예: ['AA','AK']) r1~r2 행에 날짜·시각 서식 적용."""
+    if r2 < r1:
+        return
+    meta = sh.get(spreadsheetId=sid, fields="sheets(properties(sheetId,title))").execute()
+    gid = next(s["properties"]["sheetId"] for s in meta["sheets"] if s["properties"]["title"] == tab)
+    reqs = [{"repeatCell": {
+        "range": {"sheetId": gid, "startRowIndex": r1 - 1, "endRowIndex": r2,
+                  "startColumnIndex": _col_index(c), "endColumnIndex": _col_index(c) + 1},
+        "cell": {"userEnteredFormat": {"numberFormat": {"type": "DATE_TIME", "pattern": DATE_TIME_PATTERN}}},
+        "fields": "userEnteredFormat.numberFormat"}} for c in cols]
+    sh.batchUpdate(spreadsheetId=sid, body={"requests": reqs}).execute()
 
 
 def _week_num(tab: str) -> int:

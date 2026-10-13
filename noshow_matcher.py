@@ -21,6 +21,8 @@ from export_parser import (classify_treatment, _classify_disease, is_paid_target
 import week_rule
 
 DEFAULT_WINDOW_DAYS = 14
+# 전체 문의 기준 전환율에서 빼는 상담구분 — 재진 문의는 초진이 될 수 없다.
+ALL_EXCLUDE_CHANNELS = {"재진", "재진문의"}
 OVERRIDE_TAB = "_노쇼보정"       # 별도 탭(주간시트 구조 미변경). 수기보정 저장.
 OVERRIDE_STATES = ("전환", "노쇼", "내원대기")
 
@@ -95,6 +97,12 @@ def _pdate(s):
     s = str(s or "").strip()
     if not s:
         return None
+    # 서식 없는 칸은 날짜가 시트 일련값 그대로('46283.50556') 보인다 → 날짜로 환산
+    if re.match(r"^\d{5}(\.\d+)?$", s):
+        try:
+            return date(1899, 12, 30) + timedelta(days=int(float(s)))
+        except (ValueError, OverflowError):
+            return None
     # 한국식 점 형식 'YYYY. M. D'(공백 포함, 수기 6월분) — split 전에 처리
     m = re.match(r"(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})", s)
     if m:
@@ -249,10 +257,23 @@ def aggregate_by_period(result: dict) -> dict:
                     a["특화전환"] += 1                 # 특화 내원(예약완료 전환)
                     if paid:
                         a["특화결제"] += 1             # 그 내원환자 실제 결제(코호트 일관)
+    # 전체 문의 기준(재진 제외): 전체문의 / 전체전환 / 전체대기(아직 14일 안 됨·데이터대기·판정불가)
+    for r in result.get("all_rows", []):
+        wk = r["week"]
+        mo = wk.rsplit("-", 1)[0] + "월" if "-" in wk else wk
+        for period in (wk, mo):
+            a = agg[period]
+            a["전체문의"] = a.get("전체문의", 0) + 1
+            if r["status"] == "전환":
+                a["전체전환"] = a.get("전체전환", 0) + 1
+            elif r["status"] != "미전환":
+                a["전체대기"] = a.get("전체대기", 0) + 1
     out = {}
     for p, a in agg.items():
         denom = a["전환"] + a["노쇼"]
         a["전환율"] = round(a["전환"] / denom, 4) if denom else None
+        for k in ("전체문의", "전체전환", "전체대기"):
+            a.setdefault(k, 0)
         out[p] = a
     return out
 
@@ -436,6 +457,31 @@ def match_inquiries(sid: str, asof, tabs: list, *, window_days: int = DEFAULT_WI
                      "method": method, "matched": matched, "key": k, "overridden": overridden,
                      "until": str(until) if until else "", "forced": forced})
 
+    # ── 전체 문의 기준 판정(2026-10-13) ─────────────────────────────
+    # 위 rows 는 '예약완료' 문의만 본다(=예약 후 내원율). 원장 대시보드 '문의→내원 전환율'은
+    # 전체 문의를 분모로 해야 한다(사용자 결정). 같은 매칭 규칙(문의일−1 ~ +14일 초진표,
+    # 차트→전화→성명)으로 **모든 문의**를 전환/대기/미전환/데이터대기로 판정한다.
+    # 재진 문의는 초진이 될 수 없어 뺀다(9월 전 지점 537건 중 4건).
+    all_rows = []
+    for iq in inquiries:
+        if iq.get("channel", "").replace(" ", "") in ALL_EXCLUDE_CHANNELS:
+            continue
+        if not iq["time"]:
+            all_rows.append({"week": iq["week"], "status": "판정불가"})
+            continue
+        ov = overrides.get(iq_key(iq)) or {}
+        until = _pdate_ref(ov.get("until"), asof) if ov.get("until") else None
+        deadline = until if until else (iq["time"] + timedelta(days=window_days))
+        c, _m = _match(iq, chojin, window_days, hi_override=until)
+        if c:
+            st = "전환"
+        elif asof <= deadline:
+            st = "대기"
+        else:
+            need = {_week_tab_of(iq["time"], None), _week_tab_of(deadline, None)}
+            st = "미전환" if (until or need <= tabset) else "데이터대기"
+        all_rows.append({"week": iq["week"], "status": st})
+
     n = sum(counts.values())
     converted = counts["전환"]
     return {
@@ -443,6 +489,7 @@ def match_inquiries(sid: str, asof, tabs: list, *, window_days: int = DEFAULT_WI
         "예약완료수": n, "counts": counts,
         "확정전환율": (converted / (converted + counts["노쇼"])) if (converted + counts["노쇼"]) else None,
         "rows": rows,
+        "all_rows": all_rows,     # 전체 문의(재진 제외) 판정 — 문의→내원 전환율용
         "chojin": chojin,
         "inquiries": inquiries,   # 전체 문의(예약안함 포함) — 4단계 퍼널 '문의' 단계용
     }
