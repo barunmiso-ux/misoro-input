@@ -187,6 +187,17 @@ def write_patients(spreadsheet_id: str, tab: str, rows23: list, *,
             by_key[k] = list(r)
         rows23 = [by_key[k] for k in order]
 
+    # 진료과목(R열 = C..Y 기준 index 15)을 그 탭 집계표 이름으로 맞춘다. 집계 수식(COUNTIF)은
+    # 표 이름과 똑같은 값만 세서 '알레르기비염'·'통증증' 같은 표기는 피부/호흡기 집계에서
+    # 빠졌다(2026-10-13, 평택 호흡기 14→2). 근거 없는 이름은 그대로 둔다(disease_vocab).
+    try:
+        from disease_vocab import normalize, tab_vocab
+        vocab = tab_vocab(sh, spreadsheet_id, tab) if tab in titles else set()
+        if vocab:
+            rows23 = [list(r[:15]) + [normalize(r[15], vocab)] + list(r[16:]) for r in rows23]
+    except Exception:  # noqa: BLE001 — 표기 정리 실패가 업로드를 막지 않게
+        pass
+
     n = len(rows23)
     cap = PATIENT_LAST_ROW - PATIENT_FIRST_ROW + 1
     if n > cap:
