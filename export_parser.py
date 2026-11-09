@@ -612,9 +612,12 @@ def parse_inquiries(path: str) -> dict:
         #              (평택 7월 130건 중 53건·안산 21건 전건 공란, 2026-08-01 실측).
         #   전화번호 — 초진 명단과 잇는 유일한 키라 필수. **단 워크인은 예외** —
         #              상담만 하고 가면 번호를 받을 이유가 없다(사용자 확정 2026-08-01).
+        #              **예약안함·취소도 예외** — 톡톡·카톡으로 묻고 예약 없이 끝나면 번호를 받을
+        #              길이 없고, 이을 초진도 없어 잃는 게 없다(지점 문의, 사용자 확정 2026-11-09).
+        #              예약완료·진행중은 계속 필수.
         if not iq.counselor:
             iq.missing.append("상담자")
-        if not iq.phone and not _is_walkin(iq.channel):
+        if not iq.phone and not _is_walkin(iq.channel) and iq.booked is not False:
             iq.missing.append("전화번호")
         inquiries.append(iq)
 
